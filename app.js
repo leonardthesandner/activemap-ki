@@ -554,6 +554,7 @@ function openModal(type) {
     } else if (type === 'kunde') {
         document.getElementById('kundeModal').style.display = 'block';
         renderInstrumentLineQuickPicks();
+        renderFieldServiceManagerQuickPicks();
     }
 }
 
@@ -565,7 +566,42 @@ function getAllKnownInstrumentLines() {
     return Array.from(lines).sort((a, b) => a.localeCompare(b, 'de'));
 }
 
-// Schnellauswahl-Buttons für InstrumentLine im "Kunde hinzufügen"-Modal
+// Sammelt alle bereits bekannten Field-Service-Manager-Namen (echte + Sandbox-Kunden), alphabetisch sortiert
+function getAllKnownFieldServiceManagers() {
+    const names = new Set();
+    kunden.forEach(k => { if (k.fieldServiceManager && k.fieldServiceManager.trim()) names.add(k.fieldServiceManager.trim()); });
+    futureKunden.forEach(k => { if (k.fieldServiceManager && k.fieldServiceManager.trim()) names.add(k.fieldServiceManager.trim()); });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, 'de'));
+}
+
+// Ein InstrumentLine-Chip umschalten (Mehrfachauswahl) - Feldwert = kommagetrennte Liste aller ausgewählten Chips
+function toggleInstrumentLineChip(chipEl, fieldId) {
+    chipEl.classList.toggle('selected');
+    const field = document.getElementById(fieldId);
+    if (!field) return;
+
+    const selectedValues = Array.from(chipEl.parentElement.querySelectorAll('.instrument-line-chip.selected'))
+        .map(c => c.textContent.trim());
+    field.value = selectedValues.join(', ');
+}
+
+// Einen Chip auswählen (Einfachauswahl) - erneuter Klick auf den ausgewählten Chip hebt die Auswahl auf
+function selectSingleChip(chipEl, fieldId) {
+    const field = document.getElementById(fieldId);
+    if (!field) return;
+
+    const wasSelected = chipEl.classList.contains('selected');
+    chipEl.parentElement.querySelectorAll('.instrument-line-chip.selected').forEach(c => c.classList.remove('selected'));
+
+    if (wasSelected) {
+        field.value = '';
+    } else {
+        chipEl.classList.add('selected');
+        field.value = chipEl.textContent.trim();
+    }
+}
+
+// Schnellauswahl-Buttons für InstrumentLine im "Kunde hinzufügen"-Modal (Mehrfachauswahl)
 // (nur im Zukunftsmodus - klicken befüllt das Textfeld, ohne das Formular abzuschicken)
 function renderInstrumentLineQuickPicks() {
     const container = document.getElementById('kundeInstrumentLineQuickPicks');
@@ -578,7 +614,23 @@ function renderInstrumentLineQuickPicks() {
 
     const lines = getAllKnownInstrumentLines();
     container.innerHTML = lines.map(line => `
-        <button type="button" class="instrument-line-chip" onclick="document.getElementById('kundeInstrumentLine').value = '${line.replace(/'/g, "\\'")}'">${line}</button>
+        <button type="button" class="instrument-line-chip" onclick="toggleInstrumentLineChip(this, 'kundeInstrumentLine')">${line}</button>
+    `).join('');
+}
+
+// Schnellauswahl-Buttons für Field Service Manager im "Kunde hinzufügen"-Modal (Einfachauswahl)
+function renderFieldServiceManagerQuickPicks() {
+    const container = document.getElementById('kundeFieldServiceManagerQuickPicks');
+    if (!container) return;
+
+    if (appMode !== 'future') {
+        container.innerHTML = '';
+        return;
+    }
+
+    const names = getAllKnownFieldServiceManagers();
+    container.innerHTML = names.map(name => `
+        <button type="button" class="instrument-line-chip" onclick="selectSingleChip(this, 'kundeFieldServiceManager')">${name}</button>
     `).join('');
 }
 
@@ -7895,10 +7947,15 @@ function addSimKunde() {
         return;
     }
 
+    // Mehrfachauswahl: instrumentLine kann eine kommagetrennte Liste sein (z.B. über die Schnellauswahl-Chips)
+    const instrumentLines = instrumentLine
+        ? instrumentLine.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        : [];
+
     const newKunde = {
         id: 'sim_kunde_' + Date.now(),
         name: name,
-        instrumentLines: instrumentLine ? [instrumentLine] : [],
+        instrumentLines: instrumentLines,
         fieldServiceManager: fieldServiceManager,
         lat: lat,
         lng: lng,
@@ -7945,12 +8002,19 @@ function deleteSimKunde(id) {
 }
 
 // System/Gerät zu einem Sandbox-Kunden hinzufügen
-function addSimSystemToKunde(kundeId, systemName) {
+function addSimSystemToKunde(kundeId, systemNamesRaw) {
     const kunde = futureKunden.find(k => k.id === kundeId);
-    if (!kunde || !systemName || !systemName.trim()) return;
+    if (!kunde || !systemNamesRaw || !systemNamesRaw.trim()) return;
 
     if (!Array.isArray(kunde.instrumentLines)) kunde.instrumentLines = [];
-    kunde.instrumentLines.push(systemName.trim());
+
+    // Mehrfachauswahl: systemNamesRaw kann eine kommagetrennte Liste sein (z.B. über die Schnellauswahl-Chips)
+    const namesToAdd = systemNamesRaw.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    namesToAdd.forEach(name => {
+        if (!kunde.instrumentLines.includes(name)) {
+            kunde.instrumentLines.push(name);
+        }
+    });
 
     checkCustomerCoverageFuture();
     renderFutureMarkers();
@@ -8108,7 +8172,7 @@ function renderFutureSandboxPanel() {
         if (isAddingSystem) {
             const quickPicks = getAllKnownInstrumentLines().filter(line => !devices.includes(line));
             const quickPickChips = quickPicks.map(line =>
-                `<button type="button" class="instrument-line-chip" onclick="document.getElementById('futureNewSystemInput_${kunde.id}').value = '${line.replace(/'/g, "\\'")}'">${line}</button>`
+                `<button type="button" class="instrument-line-chip" onclick="toggleInstrumentLineChip(this, 'futureNewSystemInput_${kunde.id}')">${line}</button>`
             ).join('');
 
             addSystemUI = `
