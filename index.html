@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CoverageMap - Techniker Abdeckungs-Analyse</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="header">
+        <div style="flex: 1; display: flex; align-items: center; gap: 15px;">
+            <img src="logo.png" alt="CoverageMap Logo" style="height: 50px; width: 50px; border-radius: 12px;">
+            <div>
+                <h1 style="margin: 0;">CoverageMap</h1>
+                <p style="margin: 5px 0 0 0;">Visualisierung der Techniker-Abdeckung und Reichweite</p>
+            </div>
+        </div>
+        <!-- Analyse-Button und Modus-Toggle -->
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <button id="analyzeButton" class="header-refresh-btn" title="Analyse durchführen">
+                🔄
+            </button>
+            <button id="headerAnalyzeBtn" class="header-analyze-btn" onclick="toggleAnalysisPanel()">
+                📊 Analyse
+            </button>
+            <button id="notesButton" class="header-analyze-btn" onclick="toggleNotesWindow()" title="Notizen öffnen">
+                📝 Notizen
+            </button>
+            <button id="assignmentModeBtn" class="header-analyze-btn" onclick="toggleAssignmentMode()" title="Kunden zuweisen" style="display: none;">
+                👥 Kunden zuweisen
+            </button>
+            <div class="mode-toggle-container mode-toggle-3way">
+                <span class="mode-label" id="modeLabelCalendar" onclick="setAppMode('calendar')">📅 Kalender</span>
+                <span class="mode-label" id="modeLabelStrategy" onclick="setAppMode('strategy')">🎯 Strategie</span>
+                <span class="mode-label" id="modeLabelFuture" onclick="setAppMode('future')">🔮 Zukunft</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Sidebar für Steuerung -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
+
+            <!-- Zukunfts-Sandbox: nur im Zukunftsmodus sichtbar -->
+            <div class="section future-panel" id="futureModeSection">
+                <div class="section-header">
+                    <h3>🔮 Zukunfts-Sandbox</h3>
+                </div>
+
+                <div class="future-kpi-bar">
+                    <div class="future-kpi">
+                        <div class="future-kpi-val" id="futureKpiTech">—</div>
+                        <div class="future-kpi-label">Techniker</div>
+                    </div>
+                    <div class="future-kpi">
+                        <div class="future-kpi-val" id="futureKpiKunden">—</div>
+                        <div class="future-kpi-label">Kunden</div>
+                    </div>
+                    <div class="future-kpi">
+                        <div class="future-kpi-val" id="futureKpiAbdeckung">—</div>
+                        <div class="future-kpi-label">Abdeckung Sandbox</div>
+                    </div>
+                    <div class="future-kpi">
+                        <div class="future-kpi-val" id="futureKpiAbdeckungReal">—</div>
+                        <div class="future-kpi-label">Abdeckung Echt</div>
+                    </div>
+                </div>
+
+                <div class="future-actions">
+                    <button class="btn btn-secondary" onclick="openModal('techniker')">+ Techniker</button>
+                    <button class="btn btn-secondary" onclick="openModal('kunde')">+ Kunde</button>
+                    <button class="btn btn-secondary" onclick="resetFutureSandbox()" title="Sandbox auf echten Datenstand zurücksetzen">↺ Reset</button>
+                </div>
+
+                <div class="future-scenario-bar">
+                    <select id="futureScenarioSelect" onchange="onFutureScenarioSelectChange()">
+                        <option value="">— Unbenannter Entwurf —</option>
+                    </select>
+                    <button class="future-scenario-btn" onclick="promptSaveFutureScenario()" title="Als Szenario speichern">💾</button>
+                    <button class="future-scenario-btn" onclick="deleteCurrentFutureScenario()" title="Aktuelles Szenario löschen">🗑️</button>
+                </div>
+
+                <h4 class="future-list-heading">👷 Techniker (Sandbox)</h4>
+                <div id="futureTechnikerList"></div>
+
+                <h4 class="future-list-heading">📍 Kunden &amp; Systeme (Sandbox)</h4>
+                <div id="futureKundenList"></div>
+            </div>
+
+            <!-- Kalender an erster Position mit Hervorhebung -->
+            <div class="section" id="calendarSection" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; padding: 12px; margin-bottom: 15px; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);">
+                <div class="section-header" onclick="toggleSection('scheduleSection')" style="color: white;">
+                    <h3>📅 Dienstplan</h3>
+                    <span class="toggle-icon" id="scheduleToggle" style="color: white;">▼</span>
+                </div>
+                <div id="scheduleSection" class="collapsible-content">
+                    <div class="schedule-controls">
+                        <button id="openFullscreenCalendar" class="btn btn-primary" style="margin-bottom: 10px;">🔍 Kalender vergrößern / Installation planen</button>
+                        
+                        <!-- Teamgebiet Dropdown mit Checkboxen -->
+                        <div class="team-dropdown-container" style="margin-bottom: 10px;">
+                            <button id="teamDropdownBtn" class="team-dropdown-btn" onclick="toggleTeamDropdown()">
+                                <span id="teamDropdownLabel">🏢 Teamgebiet: Alle</span>
+                                <span style="margin-left: auto;">▼</span>
+                            </button>
+                            <div id="teamDropdownMenu" class="team-dropdown-menu">
+                                <div style="padding: 8px; color: #6c757d; font-size: 11px; border-bottom: 1px solid #e0e0e0;">
+                                    Keine Teamgebiete vorhanden
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                            <button id="prevMonth" class="btn-schedule-nav">◀</button>
+                            <div id="currentMonthLabel" style="flex: 1; text-align: center; font-weight: 600; padding: 8px;">November 2025</div>
+                            <button id="nextMonth" class="btn-schedule-nav">▶</button>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                            <button id="viewMonth" class="btn-view active">📅 Monat</button>
+                            <button id="viewWeek" class="btn-view">📆 Woche</button>
+                            <button id="viewToday" class="btn-view">📍 Heute</button>
+                        </div>
+                    </div>
+                    <div id="scheduleCalendar" class="schedule-calendar"></div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('apiConfigSection')">
+                    <h3>⚙️ API Konfiguration</h3>
+                    <span class="toggle-icon collapsed" id="apiConfigToggle">▼</span>
+                </div>
+                <div id="apiConfigSection" class="collapsible-content collapsed">
+                    <div class="form-group">
+                        <label for="apiKey">OpenRouteService API Key:</label>
+                        <input type="text" id="apiKey" placeholder="Ihr API Key hier eingeben">
+                        <button id="saveApiKey" class="btn btn-primary">API Key speichern</button>
+                        <button id="testApi" class="btn btn-secondary" style="margin-top: 8px;">🔍 API-Verbindung testen</button>
+                        <div id="apiStatus" class="status-message"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('deviceWeightsSection')">
+                    <h3>⚖️ Gerätegewichtungen</h3>
+                    <span class="toggle-icon collapsed" id="deviceWeightsToggle">▼</span>
+                </div>
+                <div id="deviceWeightsSection" class="collapsible-content collapsed">
+                    <p style="font-size: 12px; color: #6c757d; margin-bottom: 12px;">
+                        Legen Sie Wertigkeiten für verschiedene Gerätetypen fest (z.B. größere Geräte = höhere Wertigkeit).
+                        Standard: 1.0
+                    </p>
+                    <div id="deviceWeightsList" style="margin-top: 10px;">
+                        <!-- Populated by JavaScript -->
+                        <small style="color: #95a5a6;">Keine Geräte vorhanden. Importieren Sie erst Kunden.</small>
+                    </div>
+                    <button onclick="saveDeviceWeights()" class="btn btn-primary" style="margin-top: 12px;">
+                        💾 Gewichtungen speichern
+                    </button>
+                </div>
+            </div>
+
+            <div class="section" id="skillFilterParent">
+                <div class="section-header" onclick="toggleSection('skillFilterSection')">
+                    <h3>🎯 Filter nach Skills</h3>
+                    <span class="toggle-icon collapsed" id="skillFilterToggle">▼</span>
+                </div>
+                <div id="skillFilterSection" class="collapsible-content collapsed">
+                    <div id="skillFilter" class="filter-section">
+                        <small style="color: #6c757d;">Keine Skills vorhanden</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section" id="instrumentLineFilterParent">
+                <div class="section-header" onclick="toggleSection('instrumentLineFilterSection')">
+                    <h3>🏭 Filter nach InstrumentLine</h3>
+                    <span class="toggle-icon collapsed" id="instrumentLineFilterToggle">▼</span>
+                </div>
+                <div id="instrumentLineFilterSection" class="collapsible-content collapsed">
+                    <div id="instrumentLineFilter" class="filter-section">
+                        <small style="color: #6c757d;">Keine InstrumentLines vorhanden</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section" id="rslFilterParent">
+                <div class="section-header" onclick="toggleSection('rslFilterSection')">
+                    <h3>🏢 Filter nach Teamgebiet</h3>
+                    <span class="toggle-icon collapsed" id="rslFilterToggle">▼</span>
+                </div>
+                <div id="rslFilterSection" class="collapsible-content collapsed">
+                    <div id="rslFilter" class="filter-section">
+                        <small style="color: #6c757d;">Keine Teamgebiete vorhanden</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('technikerSection')">
+                    <h3>👷 Techniker verwalten</h3>
+                    <span class="toggle-icon collapsed" id="technikerToggle">▼</span>
+                </div>
+                <div id="technikerSection" class="collapsible-content collapsed">
+                    <button id="addTechniker" class="btn btn-secondary">+ Techniker hinzufügen</button>
+                    <div id="technikerList"></div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('kundenSection')">
+                    <h3>📍 Kunden verwalten</h3>
+                    <span class="toggle-icon collapsed" id="kundenToggle">▼</span>
+                </div>
+                <div id="kundenSection" class="collapsible-content collapsed">
+                    <button id="addKunde" class="btn btn-secondary">+ Kunde hinzufügen</button>
+                    <div id="kundenList"></div>
+                </div>
+            </div>
+
+            <!-- Modal für Vollbild-Kalender -->
+            <div id="fullscreenCalendarModal" class="modal">
+                <div class="modal-content" style="max-width: 98%; width: 98%; max-height: 95vh; display: flex; flex-direction: column;">
+                    <div style="display: flex; justify-content: space-between; align-items: start; position: sticky; top: 0; background: white; z-index: 100; padding-bottom: 10px;">
+                        <h2 style="margin: 0;">📅 Dienstplan - Vollansicht</h2>
+                        <span class="close" onclick="closeFullscreenCalendar()" style="position: relative; z-index: 10000; font-size: 32px; line-height: 1; cursor: pointer;">&times;</span>
+                    </div>
+                    
+                    <div style="flex: 1; overflow-y: auto; overflow-x: hidden;">
+                    
+                    <!-- Teamgebiet Dropdown mit Checkboxen im Vollbild -->
+                    <div class="team-dropdown-container" style="margin-bottom: 15px;">
+                        <button id="teamDropdownBtnFullscreen" class="team-dropdown-btn" onclick="toggleTeamDropdownFullscreen()">
+                            <span id="teamDropdownLabelFullscreen">🏢 Teamgebiet: Alle</span>
+                            <span style="margin-left: auto;">▼</span>
+                        </button>
+                        <div id="teamDropdownMenuFullscreen" class="team-dropdown-menu">
+                            <div style="padding: 8px; color: #6c757d; font-size: 11px; border-bottom: 1px solid #e0e0e0;">
+                                Keine Teamgebiete vorhanden
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Installation Planning Section -->
+                    <div id="installationPlanningSection" style="background: linear-gradient(135deg, #6f42c1 0%, #9b59b6 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; display: none;">
+                        <h3 style="color: white; margin-top: 0; margin-bottom: 12px; font-size: 16px;">🔧 Installation planen</h3>
+                        <div style="display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end;">
+                            <div>
+                                <label style="color: white; font-size: 12px; display: block; margin-bottom: 5px;">Projektumfang:</label>
+                                <select id="projectSizeSelect" style="width: 100%; padding: 8px; border-radius: 4px; border: none; font-size: 13px;">
+                                    <option value="">-- Bitte wählen --</option>
+                                    <option value="S">S - 1 Woche (5 Tage)</option>
+                                    <option value="M">M - 2 Wochen (10 Tage)</option>
+                                    <option value="XL">XL - 3 Wochen (15 Tage)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <button id="startProjectPlanningBtn" class="btn btn-primary" style="background: white; color: #6f42c1; font-weight: 600;">
+                                    📅 Projekt planen
+                                </button>
+                            </div>
+                        </div>
+                        <div id="planningInstructions" style="color: white; margin-top: 12px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 4px; display: none;">
+                            <strong>📍 Bitte wählen Sie den Starttag des Technikers im Kalender</strong><br>
+                            <span style="font-size: 12px;">Klicken Sie auf den ersten Tag der Installation (Mo-Fr werden automatisch eingetragen)</span>
+                        </div>
+                    </div>
+                    
+                    <div class="schedule-controls">
+                        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                            <button onclick="changeMonth(-1)" class="btn-schedule-nav">◀</button>
+                            <div id="fullscreenMonthLabel" style="flex: 1; text-align: center; font-weight: 600; padding: 8px; font-size: 18px;">November 2025</div>
+                            <button onclick="changeMonth(1)" class="btn-schedule-nav">▶</button>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                            <button onclick="setCalendarView('month')" class="btn-view active" id="fullscreenViewMonth">📅 Monat</button>
+                            <button onclick="setCalendarView('week')" class="btn-view" id="fullscreenViewWeek">📆 Woche</button>
+                            <button onclick="goToToday()" class="btn-view">📍 Heute</button>
+                            <button id="showInstallationAnalysisBtn" class="btn-view" style="margin-left: auto; background: linear-gradient(135deg, #6f42c1 0%, #9b59b6 100%); color: white;">📊 Analyse</button>
+                            <button id="showMonthAnalysisBtn" class="btn-view" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white;">📈 Monatsanalyse</button>
+                        </div>
+                        <div style="font-size: 12px; color: #495057; margin-bottom: 15px; line-height: 1.8;">
+                            <strong>Status-Codes eingeben (Klick auf Zelle):</strong><br>
+                            <span style="background: #fd7e14; color: white; padding: 3px 8px; border-radius: 3px; margin-right: 4px;">ZR</span> Bereitschaft (Isochronen aktiv) |
+                            <span style="background: #dc3545; color: white; padding: 3px 8px; border-radius: 3px; margin: 0 4px;">X</span> Abwesend |
+                            <span style="background: #6f42c1; color: white; padding: 3px 8px; border-radius: 3px; margin: 0 4px;">I</span> Installation |
+                            <span style="background: #ffc107; color: black; padding: 3px 8px; border-radius: 3px; margin: 0 4px;">W</span> Wartung |
+                            <span style="background: #20c997; color: white; padding: 3px 8px; border-radius: 3px; margin: 0 4px;">K</span> Krank |
+                            <span style="background: #17a2b8; color: white; padding: 3px 8px; border-radius: 3px; margin: 0 4px;">U</span> Urlaub
+                        </div>
+                    </div>
+                    <div id="fullscreenScheduleCalendar" class="schedule-calendar" style="overflow-x: auto; overflow-y: auto;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('aiAssistantSection')">
+                    <h3>🤖 KI-Assistent</h3>
+                    <span class="toggle-icon collapsed" id="aiAssistantToggle">▼</span>
+                </div>
+                <div id="aiAssistantSection" class="collapsible-content collapsed">
+                    <div class="form-group">
+                        <label for="openaiApiKey">OpenAI API Key:</label>
+                        <input type="password" id="openaiApiKey" placeholder="sk-...">
+                        <button id="saveOpenAIKey" class="btn btn-primary" style="margin-top: 8px;">API Key speichern</button>
+                        <div id="openaiStatus" class="status-message"></div>
+                        <label class="ai-anon-toggle" id="aiAnonToggleBox" for="aiAnonToggle">
+                            <input type="checkbox" id="aiAnonToggle" onchange="saveAnonSetting()">
+                            <div class="ai-anon-text-block">
+                                <span class="ai-anon-text" id="aiAnonText">🔓 Anonymisierung aus</span>
+                                <span class="ai-anon-hint" id="aiAnonHint">Namen werden an OpenAI gesendet</span>
+                            </div>
+                            <span class="ai-anon-slider"></span>
+                        </label>
+                    </div>
+                    <div class="ai-chat-container">
+                        <div id="aiChatHistory" class="ai-chat-history"></div>
+                        <div class="ai-input-container">
+                            <input type="text" id="aiInput" class="ai-input" placeholder="Fragen Sie den KI-Assistenten...">
+                            <button id="aiSendBtn" class="btn-ai-send">📤</button>
+                        </div>
+                        <div class="ai-suggestions">
+                            <small style="color: #6c757d; display: block; margin-bottom: 5px;">Beispiele:</small>
+                            <button class="ai-suggestion-btn" onclick="askAI('Welche Kunden sind nicht abgedeckt und am dringendsten?')">🎯 Dringendste Kunden</button>
+                            <button class="ai-suggestion-btn" onclick="askAI('Wo sollte ich einen neuen Techniker einstellen?')">📍 Neuer Techniker wo?</button>
+                            <button class="ai-suggestion-btn" onclick="askAI('Analysiere meine Coverage und gib mir 3 Empfehlungen')">💡 Optimierungs-Tipps</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('statisticsSection')">
+                    <h3>📊 Statistiken</h3>
+                    <span class="toggle-icon collapsed" id="statisticsToggle">▼</span>
+                </div>
+                <div id="statisticsSection" class="collapsible-content collapsed">
+                    <div class="stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Aktive Techniker:</span>
+                            <span id="activeTechCount" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Abgedeckte Kunden:</span>
+                            <span id="coveredCustomers" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Nicht abgedeckt:</span>
+                            <span id="uncoveredCustomers" class="stat-value warning">0</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Aufklappbare Liste der nicht abgedeckten Kunden -->
+                    <div id="uncoveredSection" style="display: none; margin-top: 15px;">
+                        <div class="section-header" onclick="toggleSection('uncoveredList')" style="background: #fff3cd; padding: 8px 10px; border-radius: 6px; margin-bottom: 10px;">
+                            <h4 style="margin: 0; font-size: 13px; color: #856404;">⚠️ Nicht abgedeckte Kunden</h4>
+                            <span class="toggle-icon" id="uncoveredListToggle">▼</span>
+                        </div>
+                        <div id="uncoveredList" class="collapsible-content" style="max-height: 300px;">
+                            <div id="uncoveredCustomersList"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('importSection')">
+                    <h3>📊 Import</h3>
+                    <span class="toggle-icon collapsed" id="importToggle">▼</span>
+                </div>
+                <div id="importSection" class="collapsible-content collapsed">
+                    <!-- Excel Import -->
+                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #495057;">📅 Kalender-Import</h4>
+                    <button id="importCalendarExcel" class="btn btn-primary">📅 Kalender-Excel importieren</button>
+                    <input type="file" id="calendarExcelInput" style="display: none;" accept=".xlsx,.xls">
+                    <small style="display: block; margin-top: 8px; margin-bottom: 15px; color: #6c757d;">
+                        Importiert Dienstplan aus Teamkalender-Excel
+                    </small>
+                    
+                    <!-- Google Sheets Live-Sync -->
+                    <div style="border-top: 1px solid #dee2e6; margin: 15px 0; padding-top: 15px;">
+                        <h4 style="margin-bottom: 10px; font-size: 14px; color: #495057;">🔄 Google Sheets Live-Sync</h4>
+                        
+                        <!-- Client ID Input -->
+                        <div style="margin-bottom: 10px;">
+                            <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: 500;">Google Client ID:</label>
+                            <input type="text" id="googleClientIdInput" placeholder="Client ID aus Google Cloud Console" style="width: 100%; padding: 6px; border: 1px solid #ced4da; border-radius: 4px; font-size: 12px; margin-bottom: 5px;">
+                            <button id="saveClientIdBtn" class="btn btn-secondary" style="width: 100%; margin-bottom: 5px;">💾 Client ID speichern</button>
+                            <small style="display: block; color: #6c757d; font-size: 11px; margin-bottom: 10px;">
+                                Aus Google Cloud Console → APIs & Services → Credentials
+                            </small>
+                        </div>
+                        
+                        <div id="googleSheetsStatus" style="padding: 8px; background: #f8f9fa; border-radius: 4px; margin-bottom: 10px; font-size: 12px;">
+                            <span style="color: #dc3545;">❌ Nicht verbunden</span>
+                        </div>
+                        
+                        <button id="connectGoogleSheetsBtn" class="btn btn-primary" style="width: 100%;">🔗 Mit Google verbinden</button>
+                        
+                        <button id="troubleshootGoogleBtn" class="btn btn-secondary" style="width: 100%; margin-top: 5px; font-size: 11px;">🔍 Konfiguration prüfen</button>
+                        
+                        <div id="googleSheetsConfig" style="display: none; margin-top: 10px;">
+                            <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: 500;">Sheet-ID:</label>
+                            <input type="text" id="googleSheetId" placeholder="Aus Sheet-URL kopieren" style="width: 100%; padding: 6px; border: 1px solid #ced4da; border-radius: 4px; font-size: 12px; margin-bottom: 5px;">
+                            
+                            <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: 500;">Tab-Name:</label>
+                            <input type="text" id="googleSheetName" value="Sheet1" style="width: 100%; padding: 6px; border: 1px solid #ced4da; border-radius: 4px; font-size: 12px; margin-bottom: 10px;">
+                            
+                            <button id="loadGoogleSheetBtn" class="btn btn-secondary" style="width: 100%;">📅 Kalender laden</button>
+                            
+                            <label style="display: flex; align-items: center; margin-top: 10px; padding: 8px; background: #e7f3ff; border-radius: 4px; cursor: pointer;">
+                                <input type="checkbox" id="autoSyncToggle" style="margin-right: 6px;">
+                                <span style="font-size: 12px;">🔄 Auto-Update (30s)</span>
+                            </label>
+                            
+                            <div id="lastSyncTime" style="margin-top: 8px; padding: 6px; background: #f8f9fa; border-radius: 4px; font-size: 11px; color: #6c757d; display: none;">
+                                <strong>Letzte Sync:</strong> <span id="lastSyncTimestamp">--:--</span>
+                            </div>
+                        </div>
+                        
+                        <small style="display: block; margin-top: 8px; color: #6c757d; font-size: 11px;">
+                            💡 Live-Sync mit Google Teamkalender
+                        </small>
+                    </div>
+                    
+                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #495057;">👷 Techniker & Kunden</h4>
+                    <button id="importTechnikerExcel" class="btn btn-secondary">📥 Techniker-Excel importieren</button>
+                    <input type="file" id="techExcelInput" style="display: none;" accept=".xlsx,.xls">
+                    <button id="importKundenExcel" class="btn btn-secondary" style="margin-top: 8px;">📥 Kunden-Excel importieren</button>
+                    <input type="file" id="kundenExcelInput" style="display: none;" accept=".xlsx,.xls">
+                    <small style="display: block; margin-top: 8px; margin-bottom: 15px; color: #6c757d;">
+                        Techniker: Name, Wohnort<br>
+                        Kunden: Kunde, Standort
+                    </small>
+                    
+                    <h4 style="margin-bottom: 10px; font-size: 14px; color: #495057;">💾 Daten Import/Export</h4>
+                    <button id="exportData" class="btn btn-secondary">💾 Daten exportieren (JSON)</button>
+                    <button id="importData" class="btn btn-secondary" style="margin-top: 8px;">📂 Daten importieren (JSON)</button>
+                    <input type="file" id="fileInput" style="display: none;" accept=".json">
+                    <button id="deleteAllData" class="btn btn-danger" style="margin-top: 10px;">🗑️ Alle Daten löschen</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>⏱️ Isochronen-Einstellungen</h3>
+                <div style="margin-bottom: 15px;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 8px;">Fahrzeit:</label>
+                    <div style="display: flex; gap: 15px;">
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="radio" name="isochroneRange" value="3600" checked style="margin-right: 5px;">
+                            <span>1 Stunde</span>
+                        </label>
+                    </div>
+                    <small style="display: block; margin-top: 5px; color: #6c757d;">
+                        Maximale Fahrzeit für Reichweite
+                    </small>
+                </div>
+                <button id="loadIsochrones" class="btn btn-primary btn-large">📡 Fehlende Isochronen laden</button>
+                <small style="display: block; margin-top: 8px; margin-bottom: 12px; color: #6c757d; font-size: 11px;">
+                    Lädt Isochronen nur für Techniker ohne gespeicherte Isochronen (benötigt Internet & API Key)
+                </small>
+            </div>
+        </div>
+
+        <!-- Karte -->
+        <div class="map-container">
+            <div id="map"></div>
+            <!-- Info & Hilfe Buttons (oben rechts in der Karte, vertikal gestapelt) -->
+            <button id="helpButton" class="help-button" onclick="toggleHelpPanel()" title="Hilfe">?</button>
+        </div>
+    </div>
+
+    <!-- Hilfe Panel (rechts fixiert) -->
+    <div id="helpPanel" class="help-panel">
+        <div class="help-resize-handle" id="helpResizeHandle"></div>
+        <div class="help-header">
+            <h2>📖 Hilfe & Anleitung</h2>
+            <button onclick="toggleHelpPanel()" class="help-btn-close" title="Schließen">×</button>
+        </div>
+        <div id="helpContent" class="help-content">
+            
+            <!-- Schnellstart -->
+            <div class="help-section">
+                <div class="help-section-header" onclick="toggleHelpSection('helpStart')">
+                    <h3>🚀 Schnellstart</h3>
+                    <span class="help-toggle collapsed">▼</span>
+                </div>
+                <div id="helpStart" class="help-section-content collapsed">
+                    <ol>
+                        <li><strong>API-Key:</strong> OpenRouteService API-Key unter ⚙️ eintragen (<a href="https://openrouteservice.org" target="_blank">kostenlos registrieren</a>)</li>
+                        <li><strong>Excel hochladen:</strong> Techniker-Liste, Kunden-Liste & Team-Kalender</li>
+                        <li><strong>Isochronen laden:</strong> Button klicken → berechnet Erreichbarkeitszonen (1 Stunde Fahrtzeit)</li>
+                        <li><strong>Modus wählen:</strong> 📅 Kalender (tagesbezogen) oder 🎯 Strategie (langfristig)</li>
+                    </ol>
+                </div>
+            </div>
+
+            <!-- Excel-Import: Techniker -->
+            <div class="help-section">
+                <div class="help-section-header" onclick="toggleHelpSection('helpExcelTech')">
+                    <h3>📊 Excel: Techniker-Liste</h3>
+                    <span class="help-toggle collapsed">▼</span>
+                </div>
+                <div id="helpExcelTech" class="help-section-content collapsed">
+                    <p><strong>Pflichtfelder (Spalten):</strong></p>
+                    <ul>
+                        <li><strong>Name</strong> oder <strong>Nachname:</strong> Nachname des Technikers</li>
+                        <li><strong>Vorname:</strong> Vorname des Technikers</li>
+                        <li><strong>PLZ</strong> oder <strong>Postleitzahl:</strong> Postleitzahl</li>
+                        <li><strong>Ort</strong>, <strong>Stadt</strong> oder <strong>City:</strong> Stadt/Gemeinde</li>
+                        <li><strong>Straße</strong>, <strong>Strasse</strong> oder <strong>Str:</strong> Straßenname (ohne Hausnummer)</li>
+                    </ul>
+                    <p><strong>Optionale Felder:</strong></p>
+                    <ul>
+                        <li><strong>Skills</strong>, <strong>Fähigkeiten</strong> oder <strong>Kompetenzen:</strong> Kommagetrennte Liste (z.B. "Prestige, Multifuge, X-Plore")</li>
+                        <li><strong>RSL</strong>, <strong>Teamgebiet</strong>, <strong>Team</strong> oder <strong>Gebiet:</strong> Region/Teamgebiet (z.B. "Nord", "Süd", "Ost", "West")</li>
+                    </ul>
+                    <p><strong>Beispiel:</strong></p>
+                    <table style="font-size: 11px; border-collapse: collapse; width: 100%; margin: 10px 0;">
+                        <tr style="background: #f8f9fa;">
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Vorname</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Name</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">PLZ</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Ort</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Straße</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Skills</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">RSL</th>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Max</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Müller</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">10115</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Berlin</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Friedrichstraße</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Prestige, X-Plore</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Nord</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Anna</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Schmidt</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">80331</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">München</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Marienplatz</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Multifuge, Prestige</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Süd</td>
+                        </tr>
+                    </table>
+                    <p><strong>💡 Hinweise:</strong></p>
+                    <ul>
+                        <li>Spaltenbezeichnungen sind flexibel (Groß-/Kleinschreibung egal)</li>
+                        <li>Skills können leer bleiben (Techniker ohne spezifische Qualifikation)</li>
+                        <li>RSL kann leer bleiben (Techniker ohne Teamzuordnung)</li>
+                        <li>Vorname + Name werden zu vollem Namen kombiniert</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Excel-Import: Kunden -->
+            <div class="help-section">
+                <div class="help-section-header" onclick="toggleHelpSection('helpExcelKunden')">
+                    <h3>📊 Excel: Kunden-Liste</h3>
+                    <span class="help-toggle collapsed">▼</span>
+                </div>
+                <div id="helpExcelKunden" class="help-section-content collapsed">
+                    <p><strong>Pflichtfelder (Spalten):</strong></p>
+                    <ul>
+                        <li><strong>Name</strong>, <strong>Kunde</strong>, <strong>Firma</strong> oder <strong>Unternehmen:</strong> Kundenname</li>
+                        <li><strong>PLZ</strong> oder <strong>Postleitzahl:</strong> Postleitzahl</li>
+                        <li><strong>Ort</strong>, <strong>Stadt</strong> oder <strong>City:</strong> Stadt/Gemeinde</li>
+                        <li><strong>Straße</strong>, <strong>Strasse</strong> oder <strong>Str:</strong> Straßenname (ohne Hausnummer)</li>
+                    </ul>
+                    <p><strong>Optionale Felder:</strong></p>
+                    <ul>
+                        <li><strong>InstrumentLine</strong>, <strong>Instrument</strong>, <strong>Line</strong> oder <strong>Geräte:</strong> Gerätetyp/Produktlinie</li>
+                        <li><strong>RSL</strong>, <strong>FSM</strong>, <strong>Teamgebiet</strong>, <strong>Team</strong> oder <strong>Gebiet:</strong> Zuständiges Teamgebiet</li>
+                    </ul>
+                    <p><strong>Beispiel:</strong></p>
+                    <table style="font-size: 11px; border-collapse: collapse; width: 100%; margin: 10px 0;">
+                        <tr style="background: #f8f9fa;">
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Name</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">PLZ</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Ort</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Straße</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">InstrumentLine</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">RSL</th>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Labor GmbH</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">10117</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Berlin</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Unter den Linden</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Prestige</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Nord</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Klinik München</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">80337</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">München</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Bavariaring</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Multifuge</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Süd</td>
+                        </tr>
+                    </table>
+                    <p><strong>💡 Hinweise:</strong></p>
+                    <ul>
+                        <li>Spaltenbezeichnungen sind flexibel</li>
+                        <li>InstrumentLine kann mehrere Geräte haben (wird später erweitert)</li>
+                        <li>RSL/FSM für regionale Zuordnung</li>
+                        <li><strong>🆕 Techniker-Spalte (optional):</strong> "PrimaryEngineerName", "Techniker", "Zuständig", "Assigned", "Engineer" oder "Tech" - Geräte werden beim Import automatisch zugewiesen</li>
+                        <li><strong>Flexibles Namens-Matching:</strong> Techniker werden auch bei teilweisen Übereinstimmungen gefunden (z.B. "Müller" findet "Max Müller")</li>
+                        <li><strong>🎯 Automatische Skill-Zuweisung:</strong> Techniker erhalten automatisch Skills für alle ihnen zugewiesenen Geräte</li>
+                    </ul>
+                    
+                    <p><strong>🆕 Beispiel mit automatischer Techniker-Zuweisung:</strong></p>
+                    <table style="font-size: 11px; border-collapse: collapse; width: 100%; margin: 10px 0;">
+                        <tr style="background: #f8f9fa;">
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Name</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Straße</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">PLZ</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Ort</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">InstrumentLine</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">PrimaryEngineerName</th>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Labor GmbH</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Unter den Linden</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">10117</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Berlin</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Prestige</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Max Müller</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Labor GmbH</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Unter den Linden</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">10117</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Berlin</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">X-Plore</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">Anna Schmidt</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Kundenzuweisung (Assignment) -->
+            <div class="help-section">
+                <div class="help-section-header" onclick="toggleHelpSection('helpAssignment')">
+                    <h3>👥 Kundenzuweisung (Assignment)</h3>
+                    <span class="help-toggle collapsed">▼</span>
+                </div>
+                <div id="helpAssignment" class="help-section-content collapsed">
+                    <p><strong>Aktivierung:</strong></p>
+                    <ul>
+                        <li>Button "👥 Kunden zuweisen" im Header klicken</li>
+                        <li>Öffnet draggbares & größenveränderbares Panel</li>
+                    </ul>
+                    
+                    <p><strong>Geräte manuell zuweisen:</strong></p>
+                    <ol>
+                        <li>Techniker in der linken Spalte auswählen (Button →)</li>
+                        <li>Isochrone für diesen Techniker wird hervorgehoben</li>
+                        <li>In der rechten Spalte: Kunden durchsuchen</li>
+                        <li>Einzelne Geräte mit (+) Button zuweisen</li>
+                        <li>Mehrfachgeräte werden nummeriert (z.B. "Pro #1", "Pro #2")</li>
+                        <li>Zugewiesene Geräte zeigen ✓ und Techniker-Name</li>
+                    </ol>
+                    
+                    <p><strong>Gerätegewichtung:</strong></p>
+                    <ul>
+                        <li>Unter ⚙️ Einstellungen → "⚖️ Gerätegewichtung" öffnen</li>
+                        <li>Eigene Gewichte für Gerätetypen festlegen (Standard: 1.0)</li>
+                        <li>Beispiel: Pro = 3.0, Pure = 2.5, P612 = 1.5</li>
+                        <li>Techniker-Anzeige zeigt "⚖️ Gewichtung: X.X" (Summe aller zugewiesenen Geräte)</li>
+                        <li>Hilft bei fairer Arbeitsverteilung</li>
+                    </ul>
+                    
+                    <p><strong>Filter-Optionen:</strong></p>
+                    <ul>
+                        <li><strong>Alle:</strong> Alle Kunden anzeigen</li>
+                        <li><strong>Zugewiesen:</strong> Kunden mit mindestens einer Zuweisung</li>
+                        <li><strong>Ausgewähltem Tech zugewiesen:</strong> Nur Kunden mit Geräten beim ausgewählten Techniker</li>
+                        <li><strong>Teilweise:</strong> Kunden mit teilweiser Geräte-Zuweisung</li>
+                        <li><strong>Nicht zugewiesen:</strong> Kunden ohne Zuweisungen</li>
+                    </ul>
+                    
+                    <p><strong>🤖 Auto-Zuweisung:</strong></p>
+                    <ul>
+                        <li>Button "🤖 Auto-Zuweisung" für automatische Verteilung</li>
+                        <li>Berücksichtigt: Reichweite (Isochrone), Skills, bestehende Zuweisungen</li>
+                        <li>Verteilt intelligently nach geografischer Nähe und Kompetenzen</li>
+                        <li>Warnt bei Skill-Mismatch (⚠️), weist aber trotzdem zu</li>
+                    </ul>
+                    
+                    <p><strong>📥 Export & 📤 Import:</strong></p>
+                    <ul>
+                        <li><strong>Export Excel:</strong> Speichert alle Zuweisungen mit Spalten:</li>
+                        <li style="margin-left: 20px;">Kunde, PLZ, Ort, Gerät, Geräte-Nr, <strong>Gerätegewichtung</strong>, Techniker, <strong>Techniker Gesamtgewichtung</strong></li>
+                        <li><strong>Import Excel:</strong> Lädt gespeicherte Zuweisungen zurück</li>
+                        <li>Zuweisungen bleiben auch nach Neustart erhalten (LocalStorage)</li>
+                    </ul>
+                    
+                    <p><strong>💡 Weitere Features:</strong></p>
+                    <ul>
+                        <li><strong>Statistiken einklappen:</strong> Button "▼ Statistiken & Aktionen" für mehr Platz</li>
+                        <li><strong>Suchfunktion:</strong> Kunden nach Name, Ort, PLZ filtern</li>
+                        <li><strong>Coverage-Status:</strong> 🟢 = vollständig abgedeckt, 🟡 = teilweise, 🔴 = nicht abgedeckt, ⚪ = außerhalb Reichweite</li>
+                        <li><strong>🗑️ Alle löschen:</strong> Entfernt alle Zuweisungen (mit Bestätigung)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Excel-Import: Team-Kalender -->
+            <div class="help-section">
+                <div class="help-section-header" onclick="toggleHelpSection('helpExcelCalendar')">
+                    <h3>📊 Excel: Team-Kalender</h3>
+                    <span class="help-toggle collapsed">▼</span>
+                </div>
+                <div id="helpExcelCalendar" class="help-section-content collapsed">
+                    <p><strong>Format (Matrix-Layout):</strong></p>
+                    <ul>
+                        <li><strong>Zeile 1 (Header):</strong> Spalte A = "KW", Spalte B = "Datum", ab Spalte C = Techniker-Namen</li>
+                        <li><strong>Ab Zeile 2 (Daten):</strong> Spalte A = Kalenderwoche, Spalte B = Datum (DD.MM.YYYY), ab Spalte C = Status-Codes</li>
+                    </ul>
+                    <p><strong>Status-Codes:</strong></p>
+                    <ul>
+                        <li><span style="background:#fd7e14;color:white;padding:2px 6px;border-radius:3px;font-size:11px;">ZR</span> = <strong>Bereitschaft</strong> (Techniker aktiv)</li>
+                        <li><span style="background:#dc3545;color:white;padding:2px 6px;border-radius:3px;font-size:11px;">X</span> = <strong>Abwesend</strong></li>
+                        <li><span style="background:#6f42c1;color:white;padding:2px 6px;border-radius:3px;font-size:11px;">I</span> = <strong>Installation</strong></li>
+                        <li><span style="background:#ffc107;color:black;padding:2px 6px;border-radius:3px;font-size:11px;">W</span> = <strong>Wartung</strong></li>
+                        <li><span style="background:#20c997;color:white;padding:2px 6px;border-radius:3px;font-size:11px;">K</span> = <strong>Krank</strong></li>
+                        <li><span style="background:#17a2b8;color:white;padding:2px 6px;border-radius:3px;font-size:11px;">U</span> = <strong>Urlaub</strong></li>
+                    </ul>
+                    <p><strong>Beispiel-Layout:</strong></p>
+                    <table style="font-size: 11px; border-collapse: collapse; width: 100%; margin: 10px 0;">
+                        <tr style="background: #f8f9fa;">
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">KW</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Datum</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Max Müller</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Anna Schmidt</th>
+                            <th style="padding: 5px; border: 1px solid #dee2e6;">Peter Klein</th>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">48</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">02.12.2025</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6; background: #fd7e14; color: white; text-align: center;">ZR</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6; background: #fd7e14; color: white; text-align: center;">ZR</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6; background: #dc3545; color: white; text-align: center;">X</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">48</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">03.12.2025</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6; background: #fd7e14; color: white; text-align: center;">ZR</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6; background: #6f42c1; color: white; text-align: center;">I</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6; background: #17a2b8; color: white; text-align: center;">U</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">48</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6;">04.12.2025</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6; background: #dc3545; color: white; text-align: center;">X</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6; background: #6f42c1; color: white; text-align: center;">I</td>
+                            <td style="padding: 5px; border: 1px solid #dee2e6; background: #fd7e14; color: white; text-align: center;">ZR</td>
+                        </tr>
+                    </table>
+                    <p><strong>💡 Wichtige Hinweise:</strong></p>
+                    <ul>
+                        <li><strong>Spalte A:</strong> KW (Kalenderwoche) - optional, wird nicht importiert</li>
+                        <li><strong>Spalte B:</strong> Datum im Format DD.MM.YYYY (z.B. 02.12.2025)</li>
+                        <li><strong>Ab Spalte C:</strong> Techniker-Namen als Header (Zeile 1)</li>
+                        <li><strong>Namens-Matching:</strong> Namen werden flexibel zugeordnet (Nachname reicht oft)</li>
+                        <li><strong>Leere Zellen:</strong> Kein Status für diesen Tag</li>
+                        <li><strong>Alternative Codes:</strong> R→ZR, S/E/M/Z→X, AFZ→U</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Modi -->
+            <div class="help-section">
+                <div class="help-section-header" onclick="toggleHelpSection('helpModes')">
+                    <h3>🎯 Betriebsmodi</h3>
+                    <span class="help-toggle collapsed">▼</span>
+                </div>
+                <div id="helpModes" class="help-section-content collapsed">
+                    <p><strong>📅 Kalendermodus:</strong></p>
+                    <ul>
+                        <li>Tagesbezogene Planung mit Dienstplan</li>
+                        <li>Nur Techniker mit Status "ZR" sind aktiv</li>
+                        <li>Tag auswählen → Abdeckung für diesen spezifischen Tag</li>
+                        <li>Status manuell im Kalender eintragen möglich</li>
+                    </ul>
+                    <p><strong>🎯 Strategiemodus:</strong></p>
+                    <ul>
+                        <li>Langfristige Analyse ohne Zeitbezug</li>
+                        <li>Alle Techniker gelten als verfügbar</li>
+                        <li>Zeigt Skill-Lücken pro Techniker</li>
+                        <li>Ideal für strategische Planung & Personalplanung</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Abdeckungsanalyse -->
+            <div class="help-section">
+                <div class="help-section-header" onclick="toggleHelpSection('helpAnalysis')">
+                    <h3>📍 Abdeckungsanalyse</h3>
+                    <span class="help-toggle collapsed">▼</span>
+                </div>
+                <div id="helpAnalysis" class="help-section-content collapsed">
+                    <p><strong>3 Kriterien für Abdeckung:</strong></p>
+                    <ol>
+                        <li><strong>Status:</strong> Techniker hat Status ZR (nur Kalendermodus)</li>
+                        <li><strong>Skill-Match:</strong> Techniker-Skill passt zu Kunden-Gerät</li>
+                        <li><strong>Geografisch:</strong> Kunde liegt in 1h-Fahrzeit (Isochrone)</li>
+                    </ol>
+                    <p><strong>Symbole auf der Karte:</strong></p>
+                    <ul>
+                        <li>🏢 = Kunde ist abgedeckt (alle Kriterien erfüllt)</li>
+                        <li>⚠️ = Kunde ist NICHT abgedeckt</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Dienstplan & Installation -->
+            <div class="help-section">
+                <div class="help-section-header" onclick="toggleHelpSection('helpCalendar')">
+                    <h3>📅 Dienstplan & Installation</h3>
+                    <span class="help-toggle collapsed">▼</span>
+                </div>
+                <div id="helpCalendar" class="help-section-content collapsed">
+                    <p><strong>Installation planen:</strong></p>
+                    <ol>
+                        <li>Kalender vergrößern</li>
+                        <li>Projektumfang wählen (S=5 Tage, M=10 Tage, XL=15 Tage)</li>
+                        <li>"Projekt planen" klicken</li>
+                        <li>Techniker-Zelle anklicken (= Starttag)</li>
+                    </ol>
+                    <p><strong>Installationsanalyse:</strong></p>
+                    <ul>
+                        <li>Button "📊 Analyse" → Starttag klicken → Endtag klicken</li>
+                        <li>Zeigt Team-Abdeckung während Installation</li>
+                    </ul>
+                    <p><strong>Monatsanalyse:</strong></p>
+                    <ul>
+                        <li>Button "📈 Monatsanalyse" → Statistiken + PDF-Export</li>
+                        <li>Techniker-Status & Tägliche Geräteabdeckung</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Tipps -->
+            <div class="help-section">
+                <div class="help-section-header" onclick="toggleHelpSection('helpTips')">
+                    <h3>💡 Tipps</h3>
+                    <span class="help-toggle collapsed">▼</span>
+                </div>
+                <div id="helpTips" class="help-section-content collapsed">
+                    <ul>
+                        <li><strong>Offline:</strong> Nach Isochronen-Laden funktioniert alles offline</li>
+                        <li><strong>Backup:</strong> JSON-Export unter Datenexport erstellen</li>
+                        <li><strong>Filter:</strong> RSL filtert Techniker UND Kunden gleichzeitig</li>
+                        <li><strong>Hilfe-Panel:</strong> Breite am linken Rand anpassbar</li>
+                        <li><strong>Assignment-Panel:</strong> Größe und Position frei anpassbar</li>
+                        <li><strong>🎯-Button:</strong> Zoomt Element auf der Karte heran</li>
+                        <li><strong>Gerätegewichtung:</strong> Eigene Gewichte für faire Arbeitsverteilung</li>
+                        <li><strong>Techniker-Import:</strong> Spalte "PrimaryEngineerName" für automatische Zuweisung beim Kunden-Import</li>
+                        <li><strong>Auto-Skills:</strong> Techniker erhalten automatisch Skills für zugewiesene Geräte beim Import</li>
+                        <li><strong>Export mit Gewichtungen:</strong> Excel zeigt Geräte- und Techniker-Gewichtungen</li>
+                    </ul>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Modal für Techniker hinzufügen -->
+    <div id="technikerModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Techniker hinzufügen</h2>
+            <form id="technikerForm">
+                <div class="form-group">
+                    <label for="techName">Name:</label>
+                    <input type="text" id="techName" required>
+                </div>
+                <div class="form-group">
+                    <label for="techAddress">Adresse oder Koordinaten:</label>
+                    <input type="text" id="techAddress" placeholder="z.B. Hauptstraße 1, München oder 48.1351,11.5820">
+                    <small>Format: Straße, Stadt ODER Latitude,Longitude</small>
+                </div>
+                <div class="form-group">
+                    <label for="techLat">Latitude:</label>
+                    <input type="number" step="any" id="techLat">
+                </div>
+                <div class="form-group">
+                    <label for="techLng">Longitude:</label>
+                    <input type="number" step="any" id="techLng">
+                </div>
+                <div class="form-group">
+                    <label for="techSkills">Skills (kommagetrennt):</label>
+                    <input type="text" id="techSkills" placeholder="z.B. LC, GCMS, ICPMS">
+                    <small>Mehrere Skills mit Komma trennen: LC, GCMS, ICPMS</small>
+                </div>
+                <div class="form-group">
+                    <label for="techRSL">Teamgebiet:</label>
+                    <input type="text" id="techRSL" placeholder="z.B. Team Nord">
+                </div>
+                <button type="submit" class="btn btn-primary">Hinzufügen</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal für Kunde hinzufügen -->
+    <div id="kundeModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Kunde hinzufügen</h2>
+            <form id="kundeForm">
+                <div class="form-group">
+                    <label for="kundeName">Firmenname:</label>
+                    <input type="text" id="kundeName" required>
+                </div>
+                <div class="form-group">
+                    <label for="kundeInstrumentLine">InstrumentLine:</label>
+                    <input type="text" id="kundeInstrumentLine" placeholder="z.B. LC, GCMS, ICPMS">
+                    <small>InstrumentLineName - muss mit Techniker-Skill übereinstimmen</small>
+                </div>
+                <div class="form-group">
+                    <label for="kundeFieldServiceManager">Field Service Manager:</label>
+                    <input type="text" id="kundeFieldServiceManager" placeholder="z.B. Max Mustermann">
+                </div>
+                <div class="form-group">
+                    <label for="kundeAddress">Adresse oder Koordinaten:</label>
+                    <input type="text" id="kundeAddress" placeholder="z.B. Bahnhofstr. 10, Berlin oder 52.5200,13.4050">
+                    <small>Format: Straße, Stadt ODER Latitude,Longitude</small>
+                </div>
+                <div class="form-group">
+                    <label for="kundeLat">Latitude:</label>
+                    <input type="number" step="any" id="kundeLat">
+                </div>
+                <div class="form-group">
+                    <label for="kundeLng">Longitude:</label>
+                    <input type="number" step="any" id="kundeLng">
+                </div>
+                <button type="submit" class="btn btn-primary">Hinzufügen</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal für Excel-Import Fortschritt -->
+    <div id="progressModal" class="modal">
+        <div class="modal-content">
+            <h2>📊 Excel wird verarbeitet...</h2>
+            <div id="progressInfo" style="margin: 20px 0;">
+                <div style="margin-bottom: 10px;">
+                    <strong id="progressText">Lade Datei...</strong>
+                </div>
+                <div style="background: #f0f0f0; border-radius: 10px; height: 30px; overflow: hidden; margin-bottom: 10px;">
+                    <div id="progressBar" style="background: #667eea; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <div id="progressDetails" style="font-size: 13px; color: #6c757d;">
+                    <div id="progressCurrent"></div>
+                    <div id="progressErrors" style="color: #dc3545; margin-top: 5px;"></div>
+                </div>
+            </div>
+            <div id="progressComplete" style="display: none; text-align: center;">
+                <div style="font-size: 48px; margin: 20px 0;">✅</div>
+                <p style="font-size: 16px; margin-bottom: 20px;"><strong>Import abgeschlossen!</strong></p>
+                <button id="closeProgress" class="btn btn-primary">Schließen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal für Skills bearbeiten -->
+    <div id="editSkillsModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Skills bearbeiten</h2>
+            <form id="editSkillsForm">
+                <div class="form-group">
+                    <label for="editTechName">Techniker:</label>
+                    <input type="text" id="editTechName" disabled style="background: #f0f0f0;">
+                </div>
+                <div class="form-group">
+                    <label for="editTechSkills">Skills (kommagetrennt):</label>
+                    <input type="text" id="editTechSkills" placeholder="z.B. LC, GCMS, ICPMS">
+                    <small>Mehrere Skills mit Komma trennen: LC, GCMS, ICPMS</small>
+                </div>
+                <button type="submit" class="btn btn-primary">Speichern</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Verschiebbare Analyse-Anzeige (auf der Karte) -->
+    <div id="analysisPanel" class="analysis-panel">
+        <div class="analysis-panel-header" id="analysisPanelHeader">
+            <span style="font-weight: 600;">📊 Tagesanalyse</span>
+            <button onclick="toggleAnalysisPanel()" class="analysis-btn-close" title="Schließen">×</button>
+        </div>
+        <div style="padding: 10px 15px; background: #f8f9fa; border-bottom: 1px solid #dee2e6;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div>
+                    <label style="font-size: 12px; color: #495057; font-weight: 600; display: block; margin-bottom: 4px;">
+                        ⚖️ Überlastungsgrenze (GE):
+                    </label>
+                    <input 
+                        type="number" 
+                        id="overloadThresholdInput" 
+                        value="80" 
+                        min="1" 
+                        step="5" 
+                        style="width: 100%; padding: 6px 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 13px;"
+                        onchange="updateOverloadThreshold()"
+                        title="Grenzwert ab dem ein Techniker als überlastet gilt"
+                    >
+                    <small style="color: #6c757d; font-size: 10px;">
+                        Techniker über diesem Wert = überlastet
+                    </small>
+                </div>
+                <div>
+                    <label style="font-size: 12px; color: #495057; font-weight: 600; display: block; margin-bottom: 4px;">
+                        ⚡ Strafgewicht (α):
+                    </label>
+                    <input 
+                        type="number" 
+                        id="penaltyWeightInput" 
+                        value="0.01" 
+                        min="0" 
+                        step="0.001" 
+                        style="width: 100%; padding: 6px 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 13px;"
+                        onchange="updatePenaltyWeight()"
+                        title="Strafgewicht für Effizienz-Score Berechnung"
+                    >
+                    <small style="color: #6c757d; font-size: 10px;">
+                        Für Effizienz-Score: E = C/(1+α×O)
+                    </small>
+                </div>
+            </div>
+        </div>
+        <div id="analysisContent" class="analysis-content">
+            <div style="text-align: center; color: #6c757d; padding: 15px;">
+                <p>Wählen Sie ein Datum im Kalender</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Verschiebbares Notizen-Fenster -->
+    <div id="notesWindow" class="notes-window">
+        <div class="notes-header" id="notesHeader">
+            <span style="font-weight: 600;">📝 Notizen</span>
+            <button onclick="toggleNotesWindow()" class="notes-btn-close" title="Schließen">×</button>
+        </div>
+        <div class="notes-content">
+            <textarea id="notesTextarea" placeholder="Hier Notizen eingeben..."></textarea>
+        </div>
+        <div class="notes-resize-handle" id="notesResizeHandle"></div>
+    </div>
+
+    <!-- Assignment Panel -->
+    <!-- Assignment Panel Popup (Draggable & Resizable) -->
+    <div id="assignmentPanel" class="assignment-panel assignment-popup">
+        <div class="assignment-panel-header popup-titlebar" id="assignmentPanelTitlebar">
+            <h2 style="margin: 0; font-size: 18px; color: white; cursor: move;">👥 Kundenzuweisung</h2>
+            <button onclick="toggleAssignmentMode()" class="assignment-btn-close" title="Schließen">×</button>
+        </div>
+        
+        <div class="assignment-panel-content">
+            <!-- Collapsible Header Section -->
+            <div class="assignment-header-collapse">
+                <button onclick="toggleAssignmentHeader()" class="assignment-collapse-btn" id="assignmentCollapseBtn" title="Einklappen/Ausklappen">
+                    <span id="assignmentCollapseIcon">▼</span> Statistiken & Aktionen
+                </button>
+            </div>
+            
+            <div class="assignment-collapsible-content" id="assignmentCollapsibleContent">
+                <!-- Statistics Bar -->
+                <div class="assignment-stats-bar">
+                    <div class="assignment-stat-item">
+                        <span class="assignment-stat-label">Gesamt:</span>
+                        <span class="assignment-stat-value" id="assignmentStatsTotal">0</span>
+                    </div>
+                    <div class="assignment-stat-item">
+                        <span class="assignment-stat-label">Zugewiesen:</span>
+                        <span class="assignment-stat-value" id="assignmentStatsAssigned" style="color: #27ae60;">0</span>
+                    </div>
+                    <div class="assignment-stat-item">
+                        <span class="assignment-stat-label">Nicht zugewiesen:</span>
+                        <span class="assignment-stat-value" id="assignmentStatsUnassigned" style="color: #e74c3c;">0</span>
+                    </div>
+                </div>
+                
+                <!-- Action Buttons -->
+                <div class="assignment-actions">
+                    <button onclick="autoAssignDevices()" class="btn-assignment-auto" title="Automatische Zuweisung">
+                        🤖 Auto-Zuweisung
+                    </button>
+                    <button onclick="exportAssignmentsExcel()" class="btn-assignment-export" title="Zuweisungen exportieren">
+                        📥 Export Excel
+                    </button>
+                    <button onclick="document.getElementById('importAssignmentsInput').click()" class="btn-assignment-import" title="Zuweisungen importieren">
+                        📤 Import Excel
+                    </button>
+                    <input type="file" id="importAssignmentsInput" accept=".xlsx, .xls" style="display: none;" onchange="importAssignmentsExcel(event)">
+                    <button onclick="clearAllAssignments()" class="btn-assignment-clear" title="Alle Zuweisungen löschen">
+                        🗑️ Alle löschen
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Split View Container -->
+            <div class="assignment-split-container">
+                <!-- Technicians Column -->
+                <div class="assignment-column">
+                    <div class="assignment-column-header">
+                        <h3>🔧 Techniker</h3>
+                        <div style="font-size: 11px; color: #7f8c8d; margin-top: 4px;">
+                            Klicken Sie einen Techniker, um Kunden zuzuweisen
+                        </div>
+                    </div>
+                    <div class="assignment-list" id="assignmentTechniciansList">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+                
+                <!-- Customers Column -->
+                <div class="assignment-column">
+                    <div class="assignment-column-header">
+                        <h3>🏢 Kunden</h3>
+                        
+                        <!-- Search Bar -->
+                        <input 
+                            type="text" 
+                            id="assignmentCustomerSearch" 
+                            placeholder="🔍 Kunde suchen..." 
+                            onkeyup="filterAssignmentCustomers()"
+                            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin: 8px 0;"
+                        />
+                        
+                        <div class="assignment-filter-buttons">
+                            <button class="assignment-filter-btn active" id="assignmentFilterAll" onclick="setAssignmentFilter('all')">
+                                Alle
+                            </button>
+                            <button class="assignment-filter-btn" id="assignmentFilterAssigned" onclick="setAssignmentFilter('assigned')">
+                                Zugewiesen
+                            </button>
+                            <button class="assignment-filter-btn" id="assignmentFilterAssignedToSelected" onclick="setAssignmentFilter('assignedToSelected')">
+                                Ausgewähltem Tech zugewiesen
+                            </button>
+                            <button class="assignment-filter-btn" id="assignmentFilterPartial" onclick="setAssignmentFilter('partial')">
+                                Teilweise
+                            </button>
+                            <button class="assignment-filter-btn" id="assignmentFilterUnassigned" onclick="setAssignmentFilter('unassigned')">
+                                Nicht zugewiesen
+                            </button>
+                        </div>
+                    </div>
+                    <div class="assignment-list" id="assignmentCustomersList">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Resize Handle -->
+        <div class="resize-handle" title="Größe ändern">⋰</div>
+    </div>
+
+    <!-- Installation Analysis Modal -->
+    <div id="installationAnalysisModal" class="modal">
+        <div id="installationAnalysisModalContent" class="modal-content" style="position: fixed; top: 20px; right: 20px; max-width: 800px; width: 800px; height: 600px; max-height: none; overflow: hidden; display: flex; flex-direction: column; margin: 0; transform: none;">
+            <div id="installationAnalysisHeader" style="cursor: move; padding: 15px; background: linear-gradient(135deg, #6f42c1 0%, #9b59b6 100%); color: white; display: flex; justify-content: space-between; align-items: center; border-radius: 8px 8px 0 0;">
+                <h2 style="margin: 0; font-size: 18px;">🔧 Installationsanalyse</h2>
+                <span class="close" onclick="closeInstallationAnalysis()" style="position: static; cursor: pointer; font-size: 28px;">&times;</span>
+            </div>
+            <div id="installationAnalysisContent" style="flex: 1; overflow-y: auto; padding: 20px;">
+                <!-- Content will be populated by JavaScript -->
+            </div>
+            <div id="installationAnalysisResizeHandle" style="position: absolute; bottom: 0; right: 0; width: 20px; height: 20px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, #6f42c1 50%);"></div>
+        </div>
+    </div>
+
+    <!-- Month Analysis Modal -->
+    <div id="monthAnalysisModal" class="modal">
+        <div id="monthAnalysisModalContent" class="modal-content" style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); max-width: 900px; width: 900px; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; margin: 0;">
+            <div id="monthAnalysisHeader" style="cursor: move; padding: 15px; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; display: flex; justify-content: space-between; align-items: center; border-radius: 8px 8px 0 0;">
+                <h2 style="margin: 0; font-size: 18px;">📈 Monatsanalyse</h2>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button onclick="downloadMonthAnalysisPDF()" style="background: white; color: #28a745; border: none; padding: 6px 15px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;">📥 PDF</button>
+                    <span class="close" onclick="closeMonthAnalysis()" style="position: static; cursor: pointer; font-size: 28px;">&times;</span>
+                </div>
+            </div>
+            <div id="monthAnalysisContent" style="flex: 1; overflow-y: auto; padding: 20px;">
+                <!-- Content will be populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <!-- Google APIs for Sheets Integration -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://apis.google.com/js/api.js"></script>
+    
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- COG SIMULATIONS-FENSTER                                 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div id="cogSimWindow" class="cog-sim-window">
+        <div class="cog-sim-header" id="cogSimHeader">
+            <div class="cog-sim-header-left">
+                <span class="cog-sim-icon">🎯</span>
+                <span class="cog-sim-title">Standort-Simulation</span>
+                <span id="cogSimSubtitle" class="cog-sim-subtitle">Center of Gravity</span>
+            </div>
+            <div class="cog-sim-header-actions">
+                <button onclick="refreshCOGSim()" class="cog-sim-action-btn" title="Neu berechnen">🔄</button>
+                <button onclick="toggleCogSimWindow()" class="cog-sim-close-btn" title="Schließen">×</button>
+            </div>
+        </div>
+
+        <div class="cog-sim-body">
+
+            <!-- Kennzahlen-Leiste -->
+            <div class="cog-sim-kpi-bar" id="cogSimKPIBar">
+                <div class="cog-sim-kpi">
+                    <div class="cog-sim-kpi-val" id="cogKpiKunden">—</div>
+                    <div class="cog-sim-kpi-label">Kunden</div>
+                </div>
+                <div class="cog-sim-kpi">
+                    <div class="cog-sim-kpi-val" id="cogKpiGeraete">—</div>
+                    <div class="cog-sim-kpi-label">Geräte</div>
+                </div>
+                <div class="cog-sim-kpi">
+                    <div class="cog-sim-kpi-val" id="cogKpiAbdeckung">—</div>
+                    <div class="cog-sim-kpi-label">Abdeckung</div>
+                </div>
+                <div class="cog-sim-kpi">
+                    <div class="cog-sim-kpi-val" id="cogKpiZiel">—</div>
+                    <div class="cog-sim-kpi-label">Ziel-Overlap</div>
+                </div>
+                <div class="cog-sim-kpi">
+                    <div class="cog-sim-kpi-val" id="cogKpiRadius">—</div>
+                    <div class="cog-sim-kpi-label">Fahrradius</div>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="cog-sim-tabs">
+                <button class="cog-sim-tab active" onclick="switchCogTab('candidates', this)">📍 Kandidaten</button>
+                <button class="cog-sim-tab" onclick="switchCogTab('isochronen', this)">🗺️ Isochronen</button>
+                <button class="cog-sim-tab" onclick="switchCogTab('kunden', this)">👥 Kunden</button>
+            </div>
+
+            <!-- Tab: Kandidaten -->
+            <div id="cogTabCandidates" class="cog-sim-tab-content active">
+                <div id="cogCandidatesList" class="cog-candidates-list">
+                    <div class="cog-empty">Noch keine Analyse. Klicke auf 🔄 oder stelle eine Frage im KI-Chat.</div>
+                </div>
+            </div>
+
+            <!-- Tab: Isochronen Ein/Ausblenden -->
+            <div id="cogTabIsochronen" class="cog-sim-tab-content">
+                <div class="cog-iso-section-label">Bestehende Techniker</div>
+                <div id="cogIsoToggleList" class="cog-iso-toggle-list"></div>
+                <div class="cog-iso-section-label" id="cogIsoSimLabel" style="display:none;">Simulierte Kandidaten</div>
+                <div id="cogIsoSimList" class="cog-iso-toggle-list"></div>
+                <div class="cog-iso-footer">
+                    <button onclick="cogIsoToggleAll(true)" class="cog-iso-btn">✅ Alle einblenden</button>
+                    <button onclick="cogIsoToggleAll(false)" class="cog-iso-btn">⬜ Alle ausblenden</button>
+                    <button onclick="cogIsoOnlySimulated()" class="cog-iso-btn cog-iso-btn-gold">🎯 Nur Kandidaten</button>
+                </div>
+            </div>
+
+            <!-- Tab: Kunden -->
+            <div id="cogTabKunden" class="cog-sim-tab-content">
+                <div class="cog-kunden-filter">
+                    <label class="cog-filter-chip active" id="cogFilterAll" onclick="setCogKundenFilter('all', this)">Alle</label>
+                    <label class="cog-filter-chip" id="cogFilterUncovered" onclick="setCogKundenFilter('uncovered', this)">❌ Nicht abgedeckt</label>
+                    <label class="cog-filter-chip" id="cogFilterPartial" onclick="setCogKundenFilter('partial', this)">⚠️ Teilweise</label>
+                    <label class="cog-filter-chip" id="cogFilterCovered" onclick="setCogKundenFilter('covered', this)">✅ Abgedeckt</label>
+                </div>
+                <div id="cogKundenList" class="cog-kunden-list"></div>
+            </div>
+
+        </div>
+
+        <!-- Resize-Handle -->
+        <div class="cog-sim-resize-handle" id="cogSimResize"></div>
+    </div>
+
+    <script src="app.js?v=2024120904"></script>
+</body>
+</html>
