@@ -25,6 +25,7 @@ let futureIsochroneLayers = [];    // Isochronen-Kartenlayer der Sandbox
 let futureScenarioId = null;       // Aktuell geladenes Szenario (IndexedDB-ID) oder null = unbenannter Entwurf
 let futureScenarioName = null;
 let futureRealCoveragePercent = null; // Echte Abdeckung zum Zeitpunkt des Betretens der Sandbox (für KPI-Vergleich)
+let activeFutureRSLFilters = new Set(); // Welche Teamgebiete in der Sandbox aktiv sind
 const FUTURE_SCENARIO_INDEX_ID = 'future_scenarios_index';
 
 // Dienstplan-Variablen
@@ -7323,8 +7324,10 @@ function enterFutureMode() {
     // Sandbox beim allerersten Betreten mit einer Kopie der echten Daten befüllen
     if (futureTechniker.length === 0 && futureKunden.length === 0 && futureScenarioId === null) {
         initFutureSandboxFromReal();
+        activeFutureRSLFilters.clear();
     }
 
+    initializeFutureFiltersIfEmpty();
     futureRealCoveragePercent = computeCurrentRealCoveragePercent();
 
     renderFutureMarkers();
@@ -7418,8 +7421,140 @@ function deviceMatchesSkills(deviceName, skills) {
     });
 }
 
+// ----- Teamgebiet-Filter (Sandbox) -----
+// Beim ersten Befüllen der Sandbox: Filter-Set mit allen vorhandenen Teamgebieten vorbelegen
+function initializeFutureFiltersIfEmpty() {
+    if (activeFutureRSLFilters.size === 0) {
+        futureTechniker.forEach(tech => {
+            if (tech.rsl && tech.rsl.trim()) {
+                activeFutureRSLFilters.add(tech.rsl.trim());
+            }
+        });
+    }
+}
+
+// Teamgebiet-Filter auf Sandbox-Techniker/-Kunden anwenden (setzt .visible)
+function applyFutureFilters() {
+    const allTeams = new Set();
+    futureTechniker.forEach(tech => {
+        if (tech.rsl && tech.rsl.trim()) allTeams.add(tech.rsl.trim());
+    });
+
+    // Filter nur aktiv, wenn NICHT alle Teams ausgewählt sind (leer = kein Filter = alle zeigen)
+    const isTeamFilterActive = activeFutureRSLFilters.size > 0 && activeFutureRSLFilters.size < allTeams.size;
+
+    futureTechniker.forEach(tech => {
+        if (!isTeamFilterActive) {
+            tech.visible = true;
+            return;
+        }
+        tech.visible = !!(tech.rsl && tech.rsl.trim() && activeFutureRSLFilters.has(tech.rsl.trim()));
+    });
+
+    futureKunden.forEach(kunde => {
+        if (!isTeamFilterActive) {
+            kunde.visible = true;
+            return;
+        }
+        if (kunde.fieldServiceManager && kunde.fieldServiceManager.trim()) {
+            const fsmLower = kunde.fieldServiceManager.trim().toLowerCase();
+            let matches = false;
+            for (const rsl of activeFutureRSLFilters) {
+                const rslLower = rsl.toLowerCase();
+                if (fsmLower.includes(rslLower) || rslLower.includes(fsmLower)) {
+                    matches = true;
+                    break;
+                }
+            }
+            kunde.visible = matches;
+        } else {
+            // Kunde ohne zugeordnetes Team: immer anzeigen (wie im echten Filter)
+            kunde.visible = true;
+        }
+    });
+}
+
+// Ein Teamgebiet-Filter umschalten
+function toggleFutureRSLFilter(rsl) {
+    if (activeFutureRSLFilters.has(rsl)) {
+        activeFutureRSLFilters.delete(rsl);
+    } else {
+        activeFutureRSLFilters.add(rsl);
+    }
+    checkCustomerCoverageFuture();
+    renderFutureMarkers();
+    renderFutureSandboxPanel();
+}
+
+// Alle Teamgebiet-Filter umschalten (Alle / Keine)
+function toggleAllFutureRSLFilters() {
+    const allRSLs = new Set();
+    futureTechniker.forEach(tech => {
+        if (tech.rsl && tech.rsl.trim()) allRSLs.add(tech.rsl.trim());
+    });
+
+    if (activeFutureRSLFilters.size === allRSLs.size) {
+        activeFutureRSLFilters.clear();
+    } else {
+        allRSLs.forEach(rsl => activeFutureRSLFilters.add(rsl));
+    }
+
+    checkCustomerCoverageFuture();
+    renderFutureMarkers();
+    renderFutureSandboxPanel();
+}
+
+// Teamgebiet-Filter-UI (Checkboxen + Zähler) neu rendern
+function updateFutureRSLFilters() {
+    const filterContainer = document.getElementById('futureRslFilter');
+    if (!filterContainer) return;
+
+    const allRSLs = new Set();
+    futureTechniker.forEach(tech => {
+        if (tech.rsl && tech.rsl.trim()) allRSLs.add(tech.rsl.trim());
+    });
+
+    if (allRSLs.size === 0) {
+        filterContainer.innerHTML = '<small style="color: #6c757d;">Keine Teamgebiete vorhanden</small>';
+        return;
+    }
+
+    filterContainer.innerHTML = '';
+
+    const toggleState = getFilterToggleState(activeFutureRSLFilters, allRSLs);
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'filter-header';
+    headerDiv.style.cssText = 'display: flex; justify-content: flex-end; margin-bottom: 8px;';
+    headerDiv.innerHTML = `
+        <button class="filter-toggle-btn ${toggleState.class}" onclick="toggleAllFutureRSLFilters()" id="futureRslToggleBtn">
+            ${toggleState.text}
+        </button>
+    `;
+    filterContainer.appendChild(headerDiv);
+
+    Array.from(allRSLs).sort().forEach(rsl => {
+        const count = futureTechniker.filter(t => t.rsl === rsl).length;
+        const isChecked = activeFutureRSLFilters.has(rsl);
+
+        const filterItem = document.createElement('div');
+        filterItem.className = 'filter-item';
+        filterItem.innerHTML = `
+            <input type="checkbox" id="future_rsl_${rsl}" ${isChecked ? 'checked' : ''}>
+            <label for="future_rsl_${rsl}">${rsl}</label>
+            <span class="filter-count">${count}</span>
+        `;
+
+        const checkbox = filterItem.querySelector('input');
+        checkbox.addEventListener('change', () => toggleFutureRSLFilter(rsl));
+
+        filterContainer.appendChild(filterItem);
+    });
+}
+
 // Kundenabdeckung innerhalb der Sandbox berechnen (unabhängig von echten Daten/Filtern)
 function checkCustomerCoverageFuture() {
+    applyFutureFilters();
+
     const visibleTechIds = new Set(
         futureTechniker.filter(t => t.visible !== false).map(t => t.id)
     );
@@ -7686,6 +7821,8 @@ function renderFutureSandboxPanel() {
     kpiTech.textContent = futureTechniker.length;
     document.getElementById('futureKpiKunden').textContent = futureKunden.length;
 
+    updateFutureRSLFilters();
+
     const relevantKunden = futureKunden.filter(k => k.visible !== false && (k.totalDevices || 0) > 0);
     const coveragePct = relevantKunden.length > 0
         ? Math.round((relevantKunden.filter(k => k.covered).length / relevantKunden.length) * 100)
@@ -7756,8 +7893,10 @@ function resetFutureSandbox() {
     futureIsochroneGeoJSON = [];
     futureScenarioId = null;
     futureScenarioName = null;
+    activeFutureRSLFilters.clear();
 
     initFutureSandboxFromReal();
+    initializeFutureFiltersIfEmpty();
     futureRealCoveragePercent = computeCurrentRealCoveragePercent();
 
     checkCustomerCoverageFuture();
@@ -7853,6 +7992,8 @@ function loadFutureScenario(id) {
         futureIsochroneGeoJSON = record.futureIsochroneGeoJSON || [];
         futureScenarioId = record.id;
         futureScenarioName = record.name;
+        activeFutureRSLFilters.clear();
+        initializeFutureFiltersIfEmpty();
 
         checkCustomerCoverageFuture();
         renderFutureMarkers();
