@@ -26,6 +26,7 @@ let futureScenarioId = null;       // Aktuell geladenes Szenario (IndexedDB-ID) 
 let futureScenarioName = null;
 let futureRealCoveragePercent = null; // Echte Abdeckung zum Zeitpunkt des Betretens der Sandbox (für KPI-Vergleich)
 let activeFutureRSLFilters = new Set(); // Welche Teamgebiete in der Sandbox aktiv sind
+let futureTechnicianWorkload = new Map(); // { techId: gewichtete Auslastung } - für die Zukunftsanalyse
 const FUTURE_SCENARIO_INDEX_ID = 'future_scenarios_index';
 
 // Dienstplan-Variablen
@@ -6601,10 +6602,13 @@ function openAnalysisPanel() {
 // Analyse für aktuellen Modus aktualisieren
 function updateAnalysisForCurrentMode() {
     const headerTitle = document.querySelector('#analysisPanelHeader span:first-child');
-    
+
     if (appMode === 'strategy') {
         if (headerTitle) headerTitle.textContent = '🎯 Strategieanalyse';
         calculateStrategyAnalysis();
+    } else if (appMode === 'future') {
+        if (headerTitle) headerTitle.textContent = '🔮 Zukunftsanalyse';
+        calculateFutureAnalysis();
     } else {
         if (headerTitle) headerTitle.textContent = '📊 Tagesanalyse';
         calculateDayAnalysis();
@@ -7331,6 +7335,7 @@ function enterFutureMode() {
     futureRealCoveragePercent = computeCurrentRealCoveragePercent();
 
     renderFutureMarkers();
+    restoreFutureIsochroneLayers(); // Isochronen-Layer (auch von echt kopierten Technikern) sichtbar machen
     checkCustomerCoverageFuture();
     renderFutureMarkers(); // Icons (✅/⚠️) nach Coverage-Berechnung neu zeichnen
     renderFutureSandboxPanel();
@@ -7554,10 +7559,15 @@ function updateFutureRSLFilters() {
 // Kundenabdeckung innerhalb der Sandbox berechnen (unabhängig von echten Daten/Filtern)
 function checkCustomerCoverageFuture() {
     applyFutureFilters();
+    syncFutureIsochroneVisibility();
 
     const visibleTechIds = new Set(
         futureTechniker.filter(t => t.visible !== false).map(t => t.id)
     );
+
+    // Techniker-Auslastung zurücksetzen (gewichtete Geräte-Last, anteilig bei Mehrfachabdeckung)
+    futureTechnicianWorkload = new Map();
+    futureTechniker.forEach(tech => futureTechnicianWorkload.set(tech.id, 0));
 
     futureKunden.forEach(kunde => {
         if (!Array.isArray(kunde.instrumentLines)) {
@@ -7575,6 +7585,9 @@ function checkCustomerCoverageFuture() {
         }
 
         devices.forEach(instrumentLine => {
+            const deviceWeight = deviceWeights[instrumentLine] || 1.0;
+            const coveringTechIds = [];
+
             for (const isoData of futureIsochroneGeoJSON) {
                 if (!visibleTechIds.has(isoData.techId)) continue;
 
@@ -7584,9 +7597,18 @@ function checkCustomerCoverageFuture() {
                 if (!deviceMatchesSkills(instrumentLine, tech.skills)) continue;
 
                 if (isPointInPolygon(kunde.lng, kunde.lat, isoData.feature.geometry)) {
-                    kunde.coveredDevicesList.push(instrumentLine);
-                    break;
+                    coveringTechIds.push(tech.id);
                 }
+            }
+
+            if (coveringTechIds.length > 0) {
+                kunde.coveredDevicesList.push(instrumentLine);
+
+                // Gewicht anteilig auf alle abdeckenden Techniker verteilen (wie im echten Strategiemodus)
+                const weightPerTech = deviceWeight / coveringTechIds.length;
+                coveringTechIds.forEach(techId => {
+                    futureTechnicianWorkload.set(techId, (futureTechnicianWorkload.get(techId) || 0) + weightPerTech);
+                });
             }
         });
 
@@ -7595,7 +7617,49 @@ function checkCustomerCoverageFuture() {
     });
 }
 
-// Isochrone eines Sandbox-Technikers zeichnen (gestrichelt/gold = simuliert, durchgezogen/blau = echt kopiert)
+// Erstellt den Leaflet-Layer für einen bestehenden Sandbox-Isochronen-Eintrag und fügt ihn zur Karte hinzu
+// (respektiert die aktuelle Sichtbarkeit/Filterung des zugehörigen Technikers)
+function renderFutureIsochroneLayer(isoEntry) {
+    const tech = futureTechniker.find(t => t.id === isoEntry.techId);
+
+    const style = isoEntry.isSimulated
+        ? { color: '#f1c40f', weight: 3, opacity: 0.9, fillColor: '#f1c40f', fillOpacity: 0.12, dashArray: '8, 6' }
+        : { color: '#8e44ad', weight: 2, opacity: 0.7, fillColor: '#8e44ad', fillOpacity: 0.08 };
+
+    const layer = L.geoJSON(isoEntry.feature, { style }).bindPopup(`
+        <div class="popup-title">${isoEntry.isSimulated ? '🔮 Simuliert: ' : ''}${isoEntry.name}</div>
+        <div class="popup-info">⏱️ Einzugsgebiet (Sandbox)</div>
+    `);
+
+    if (!tech || tech.visible !== false) {
+        layer.addTo(map);
+    }
+
+    futureIsochroneLayers.push({ techId: isoEntry.techId, layer: layer, name: isoEntry.name });
+}
+
+// Baut alle Sandbox-Isochronen-Layer aus futureIsochroneGeoJSON neu auf
+// (z.B. nach dem Klonen echter Daten, dem Laden eines Szenarios oder erneutem Betreten der Sandbox)
+function restoreFutureIsochroneLayers() {
+    futureIsochroneLayers.forEach(item => map.removeLayer(item.layer));
+    futureIsochroneLayers = [];
+    futureIsochroneGeoJSON.forEach(iso => renderFutureIsochroneLayer(iso));
+}
+
+// Isochronen-Layer ein-/ausblenden, damit sie zum aktuellen Teamgebiet-Filter passen
+function syncFutureIsochroneVisibility() {
+    futureIsochroneLayers.forEach(item => {
+        const tech = futureTechniker.find(t => t.id === item.techId);
+        const shouldShow = !tech || tech.visible !== false;
+        if (shouldShow && !map.hasLayer(item.layer)) {
+            map.addLayer(item.layer);
+        } else if (!shouldShow && map.hasLayer(item.layer)) {
+            map.removeLayer(item.layer);
+        }
+    });
+}
+
+// Isochrone eines Sandbox-Technikers zeichnen (gestrichelt/gold = simuliert, durchgezogen/lila = echt kopiert)
 function drawFutureIsochrone(isochroneData, name, techId, isSimulated) {
     if (!isochroneData || !isochroneData.features || isochroneData.features.length === 0) {
         console.warn(`⚠️ Keine Isochronen-Features für ${name} (Sandbox)`);
@@ -7603,19 +7667,145 @@ function drawFutureIsochrone(isochroneData, name, techId, isSimulated) {
     }
 
     const feature = isochroneData.features[0];
-    futureIsochroneGeoJSON.push({ name, techId, feature, range: 3600, isSimulated: !!isSimulated });
+    const entry = { name: name, techId: techId, feature: feature, range: 3600, isSimulated: !!isSimulated };
+    futureIsochroneGeoJSON.push(entry);
+    renderFutureIsochroneLayer(entry);
+}
 
-    const style = isSimulated
-        ? { color: '#f1c40f', weight: 3, opacity: 0.9, fillColor: '#f1c40f', fillOpacity: 0.12, dashArray: '8, 6' }
-        : { color: '#8e44ad', weight: 2, opacity: 0.7, fillColor: '#8e44ad', fillOpacity: 0.08 };
+// Isochronen für alle Sandbox-Techniker ohne vorhandene Isochrone nachladen
+async function loadMissingFutureIsochrones() {
+    const techsWithoutIsochrone = futureTechniker.filter(tech =>
+        !futureIsochroneGeoJSON.some(iso => iso.techId === tech.id)
+    );
 
-    const layer = L.geoJSON(feature, { style }).bindPopup(`
-        <div class="popup-title">${isSimulated ? '🔮 Simuliert: ' : ''}${name}</div>
-        <div class="popup-info">⏱️ Einzugsgebiet (Sandbox)</div>
-    `);
+    if (techsWithoutIsochrone.length === 0) {
+        alert('✅ Alle Sandbox-Techniker haben bereits eine Isochrone.');
+        return;
+    }
 
-    layer.addTo(map);
-    futureIsochroneLayers.push({ techId, layer, name });
+    for (const tech of techsWithoutIsochrone) {
+        const result = await fetchIsochrone(tech.lat, tech.lng, tech.name);
+        if (result.success) {
+            drawFutureIsochrone(result.data, tech.name, tech.id, !!tech.isSimulated);
+        } else {
+            console.warn(`⚠️ Isochrone für Sandbox-Techniker ${tech.name} fehlgeschlagen:`, result.error);
+        }
+        await new Promise(resolve => setTimeout(resolve, 400)); // kleine Pause zwischen Requests
+    }
+
+    checkCustomerCoverageFuture();
+    renderFutureMarkers();
+    renderFutureSandboxPanel();
+}
+
+// Zukunftsanalyse berechnen (Abdeckung + Techniker-Auslastung in der Sandbox) - füllt #analysisContent
+function calculateFutureAnalysis() {
+    const content = document.getElementById('analysisContent');
+    if (!content) return;
+
+    if (futureIsochroneGeoJSON.length === 0) {
+        content.innerHTML = `
+            <div style="padding: 20px; text-align: center;">
+                <p style="color: #dc3545; font-size: 14px;">⚠️ Keine Isochronen in der Sandbox geladen</p>
+                <p style="color: #6c757d; font-size: 12px; margin-top: 10px;">
+                    Klicke im Zukunftsmodus auf "📡 Isochronen laden".
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    const visibleTech = futureTechniker.filter(t => t.visible !== false);
+    const visibleKunden = futureKunden.filter(k => k.visible !== false);
+
+    let totalWeight = 0;
+    let coveredWeight = 0;
+    let fullyCovered = 0;
+
+    visibleKunden.forEach(kunde => {
+        const devices = (kunde.instrumentLines || []).filter(line => line && line.trim());
+        if (devices.length === 0) return;
+
+        devices.forEach(line => { totalWeight += deviceWeights[line] || 1.0; });
+        (kunde.coveredDevicesList || []).forEach(line => { coveredWeight += deviceWeights[line] || 1.0; });
+
+        if (kunde.covered) fullyCovered++;
+    });
+
+    const coveragePercent = totalWeight > 0 ? ((coveredWeight / totalWeight) * 100).toFixed(1) : 0;
+
+    const allFutureTeams = new Set();
+    futureTechniker.forEach(t => { if (t.rsl && t.rsl.trim()) allFutureTeams.add(t.rsl.trim()); });
+    const isFutureTeamFilterActive = activeFutureRSLFilters.size > 0 && activeFutureRSLFilters.size < allFutureTeams.size;
+
+    const workloadList = visibleTech
+        .map(tech => ({ tech: tech, workload: futureTechnicianWorkload.get(tech.id) || 0 }))
+        .sort((a, b) => b.workload - a.workload);
+
+    const overloaded = workloadList.filter(w => w.workload > overloadThreshold);
+
+    let html = `
+        <div class="strategy-summary">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div>
+                    <div class="strategy-summary-number">${coveragePercent}%</div>
+                    <div class="strategy-summary-label">Gewichtete Abdeckung</div>
+                </div>
+                <div>
+                    <div class="strategy-summary-number">${fullyCovered}/${visibleKunden.length}</div>
+                    <div class="strategy-summary-label">Kunden voll abgedeckt</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="font-size: 12px; color: #6c757d; margin: 12px 0;">
+            🔮 <strong>Zukunftsmodus</strong>: ${visibleTech.length} Techniker, ${visibleKunden.length} Kunden sichtbar (Sandbox)<br>
+            ⚖️ Überlastungsgrenze: ${overloadThreshold.toFixed(1)} Gewichtseinheiten
+            ${isFutureTeamFilterActive ? `<br>🏢 Filter: ${Array.from(activeFutureRSLFilters).join(', ')}` : ''}
+        </div>
+
+        <h4 style="font-size: 13px; margin-bottom: 10px;">⚖️ Techniker-Auslastung</h4>
+    `;
+
+    if (workloadList.length === 0) {
+        html += `
+            <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; text-align: center;">
+                <p style="color: #6c757d; margin: 0;">Keine sichtbaren Sandbox-Techniker mit Isochrone.</p>
+            </div>
+        `;
+    } else {
+        workloadList.forEach(({ tech, workload }) => {
+            const pct = Math.min(100, (workload / overloadThreshold) * 100);
+            const isOver = workload > overloadThreshold;
+            const barColor = isOver ? '#dc3545' : (pct > 70 ? '#ffc107' : '#28a745');
+
+            html += `
+                <div style="margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 6px; border-left: 3px solid ${barColor};">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <strong style="font-size: 13px;">${tech.isSimulated ? '🔮 ' : ''}${tech.name}</strong>
+                        <span style="font-size: 12px; font-weight: 600; color: ${isOver ? '#dc3545' : '#495057'};">${workload.toFixed(1)} GE${isOver ? ' ⚠️' : ''}</span>
+                    </div>
+                    <div style="background: #e9ecef; border-radius: 4px; height: 8px; overflow: hidden;">
+                        <div style="width: ${pct}%; height: 100%; background: ${barColor};"></div>
+                    </div>
+                </div>
+            `;
+        });
+
+        if (overloaded.length > 0) {
+            html += `<p style="font-size: 11px; color: #dc3545; margin-top: 8px;">⚠️ ${overloaded.length} Techniker über der Grenze von ${overloadThreshold.toFixed(1)} GE</p>`;
+        }
+    }
+
+    content.innerHTML = html;
+}
+
+// Analyse-Panel aktualisieren, falls es geöffnet ist und wir uns im Zukunftsmodus befinden
+function refreshFutureAnalysisPanelIfOpen() {
+    const panel = document.getElementById('analysisPanel');
+    if (panel && panel.classList.contains('active') && appMode === 'future') {
+        calculateFutureAnalysis();
+    }
 }
 
 // Techniker in der Sandbox anlegen (aus dem bestehenden Techniker-Modal)
@@ -7881,6 +8071,8 @@ function renderFutureSandboxPanel() {
         `;
         kundenList.appendChild(item);
     });
+
+    refreshFutureAnalysisPanelIfOpen();
 }
 
 // Sandbox auf den aktuellen echten Datenstand zurücksetzen
@@ -7899,6 +8091,7 @@ function resetFutureSandbox() {
     initializeFutureFiltersIfEmpty();
     futureRealCoveragePercent = computeCurrentRealCoveragePercent();
 
+    restoreFutureIsochroneLayers();
     checkCustomerCoverageFuture();
     renderFutureMarkers();
     renderFutureSandboxPanel();
@@ -7995,6 +8188,7 @@ function loadFutureScenario(id) {
         activeFutureRSLFilters.clear();
         initializeFutureFiltersIfEmpty();
 
+        restoreFutureIsochroneLayers();
         checkCustomerCoverageFuture();
         renderFutureMarkers();
         renderFutureSandboxPanel();

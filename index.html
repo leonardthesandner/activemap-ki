@@ -87,6 +87,11 @@
                     <button class="btn btn-secondary" onclick="resetFutureSandbox()" title="Sandbox auf echten Datenstand zurücksetzen">↺ Reset</button>
                 </div>
 
+                <div class="future-actions">
+                    <button class="btn btn-secondary" onclick="loadMissingFutureIsochrones()" title="Isochronen für Sandbox-Techniker ohne Einzugsgebiet laden" style="flex: 2;">📡 Isochronen laden</button>
+                    <button class="btn btn-secondary" onclick="openAnalysisPanel()" title="Zukunftsanalyse (Abdeckung &amp; Auslastung) öffnen">📊 Analyse</button>
+                </div>
+
                 <div class="future-scenario-bar">
                     <select id="futureScenarioSelect" onchange="onFutureScenarioSelectChange()">
                         <option value="">— Unbenannter Entwurf —</option>
