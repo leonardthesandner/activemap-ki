@@ -27,6 +27,7 @@ let futureScenarioName = null;
 let futureRealCoveragePercent = null; // Echte Abdeckung zum Zeitpunkt des Betretens der Sandbox (für KPI-Vergleich)
 let activeFutureRSLFilters = new Set(); // Welche Teamgebiete in der Sandbox aktiv sind
 let futureTechnicianWorkload = new Map(); // { techId: gewichtete Auslastung } - für die Zukunftsanalyse
+let futureAddingSystemFor = null; // Kunde-ID, für die gerade die "+ System"-Inline-Eingabe offen ist
 const FUTURE_SCENARIO_INDEX_ID = 'future_scenarios_index';
 
 // Dienstplan-Variablen
@@ -552,7 +553,33 @@ function openModal(type) {
         document.getElementById('technikerModal').style.display = 'block';
     } else if (type === 'kunde') {
         document.getElementById('kundeModal').style.display = 'block';
+        renderInstrumentLineQuickPicks();
     }
+}
+
+// Sammelt alle bereits bekannten InstrumentLine-Namen (echte + Sandbox-Kunden), alphabetisch sortiert
+function getAllKnownInstrumentLines() {
+    const lines = new Set();
+    kunden.forEach(k => (k.instrumentLines || []).forEach(l => { if (l && l.trim()) lines.add(l.trim()); }));
+    futureKunden.forEach(k => (k.instrumentLines || []).forEach(l => { if (l && l.trim()) lines.add(l.trim()); }));
+    return Array.from(lines).sort((a, b) => a.localeCompare(b, 'de'));
+}
+
+// Schnellauswahl-Buttons für InstrumentLine im "Kunde hinzufügen"-Modal
+// (nur im Zukunftsmodus - klicken befüllt das Textfeld, ohne das Formular abzuschicken)
+function renderInstrumentLineQuickPicks() {
+    const container = document.getElementById('kundeInstrumentLineQuickPicks');
+    if (!container) return;
+
+    if (appMode !== 'future') {
+        container.innerHTML = '';
+        return;
+    }
+
+    const lines = getAllKnownInstrumentLines();
+    container.innerHTML = lines.map(line => `
+        <button type="button" class="instrument-line-chip" onclick="document.getElementById('kundeInstrumentLine').value = '${line.replace(/'/g, "\\'")}'">${line}</button>
+    `).join('');
 }
 
 // Alle Modals schließen
@@ -7918,19 +7945,42 @@ function deleteSimKunde(id) {
 }
 
 // System/Gerät zu einem Sandbox-Kunden hinzufügen
-function addSimSystemToKunde(kundeId) {
+function addSimSystemToKunde(kundeId, systemName) {
     const kunde = futureKunden.find(k => k.id === kundeId);
-    if (!kunde) return;
-
-    const name = prompt('Name des Systems/Geräts (z.B. LC, GCMS, ICPMS):');
-    if (!name || !name.trim()) return;
+    if (!kunde || !systemName || !systemName.trim()) return;
 
     if (!Array.isArray(kunde.instrumentLines)) kunde.instrumentLines = [];
-    kunde.instrumentLines.push(name.trim());
+    kunde.instrumentLines.push(systemName.trim());
 
     checkCustomerCoverageFuture();
     renderFutureMarkers();
     renderFutureSandboxPanel();
+}
+
+// "+ System"-Inline-Eingabe für einen Kunden ein-/ausblenden
+function toggleAddSystemUI(kundeId) {
+    futureAddingSystemFor = (futureAddingSystemFor === kundeId) ? null : kundeId;
+    renderFutureSandboxPanel();
+
+    if (futureAddingSystemFor === kundeId) {
+        const input = document.getElementById('futureNewSystemInput_' + kundeId);
+        if (input) input.focus();
+    }
+}
+
+// Eingegebenen/ausgewählten Systemnamen aus der Inline-Eingabe übernehmen
+function confirmAddSimSystem(kundeId) {
+    const input = document.getElementById('futureNewSystemInput_' + kundeId);
+    if (!input) return;
+
+    const name = input.value.trim();
+    if (!name) {
+        input.focus();
+        return;
+    }
+
+    futureAddingSystemFor = null;
+    addSimSystemToKunde(kundeId, name);
 }
 
 // System/Gerät von einem Sandbox-Kunden entfernen
@@ -8053,6 +8103,28 @@ function renderFutureSandboxPanel() {
 
         const statusIcon = devices.length === 0 ? '' : (kunde.covered ? ' ✅' : ' ⚠️');
 
+        const isAddingSystem = futureAddingSystemFor === kunde.id;
+        let addSystemUI;
+        if (isAddingSystem) {
+            const quickPicks = getAllKnownInstrumentLines().filter(line => !devices.includes(line));
+            const quickPickChips = quickPicks.map(line =>
+                `<button type="button" class="instrument-line-chip" onclick="document.getElementById('futureNewSystemInput_${kunde.id}').value = '${line.replace(/'/g, "\\'")}'">${line}</button>`
+            ).join('');
+
+            addSystemUI = `
+                <div class="future-add-system-inline">
+                    <input type="text" id="futureNewSystemInput_${kunde.id}" placeholder="z.B. LC, GCMS, ICPMS" onkeydown="if(event.key==='Enter'){event.preventDefault(); confirmAddSimSystem('${kunde.id}');}">
+                    ${quickPickChips ? `<div class="instrument-line-quickpicks">${quickPickChips}</div>` : ''}
+                    <div class="future-add-system-inline-actions">
+                        <button type="button" class="future-add-system-confirm-btn" onclick="confirmAddSimSystem('${kunde.id}')">✓ Hinzufügen</button>
+                        <button type="button" class="future-add-system-cancel-btn" onclick="toggleAddSystemUI('${kunde.id}')">Abbrechen</button>
+                    </div>
+                </div>
+            `;
+        } else {
+            addSystemUI = `<button class="future-system-add-btn" onclick="toggleAddSystemUI('${kunde.id}')">+ System</button>`;
+        }
+
         const item = document.createElement('div');
         item.className = 'list-item';
         item.innerHTML = `
@@ -8061,8 +8133,8 @@ function renderFutureSandboxPanel() {
                 <div class="list-item-coords">${kunde.lat.toFixed(4)}, ${kunde.lng.toFixed(4)}</div>
                 <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
                     ${chips}
-                    <button class="future-system-add-btn" onclick="addSimSystemToKunde('${kunde.id}')">+ System</button>
                 </div>
+                ${addSystemUI}
             </div>
             <div class="list-item-actions">
                 <button class="btn-zoom" onclick="zoomToLocation(${kunde.lat}, ${kunde.lng})">🎯</button>
