@@ -575,14 +575,65 @@ function getAllKnownFieldServiceManagers() {
 }
 
 // Ein InstrumentLine-Chip umschalten (Mehrfachauswahl) - Feldwert = kommagetrennte Liste aller ausgewählten Chips
-function toggleInstrumentLineChip(chipEl, fieldId) {
-    chipEl.classList.toggle('selected');
+// Liest die aktuelle Feld-Eingabe als { Wert -> Anzahl }, damit Mehrfachnennungen (z.B. 2x LC) erhalten bleiben
+function getInstrumentLineFieldCounts(fieldId) {
+    const field = document.getElementById(fieldId);
+    const counts = new Map();
+    if (!field || !field.value.trim()) return counts;
+
+    field.value.split(',').map(s => s.trim()).filter(s => s.length > 0).forEach(value => {
+        counts.set(value, (counts.get(value) || 0) + 1);
+    });
+    return counts;
+}
+
+// Baut das Textfeld aus einer { Wert -> Anzahl }-Map neu auf (jeder Wert so oft wiederholt, wie ausgewählt)
+function rebuildInstrumentLineField(fieldId, counts) {
     const field = document.getElementById(fieldId);
     if (!field) return;
 
-    const selectedValues = Array.from(chipEl.parentElement.querySelectorAll('.instrument-line-chip.selected'))
-        .map(c => c.textContent.trim());
-    field.value = selectedValues.join(', ');
+    const parts = [];
+    counts.forEach((count, value) => {
+        for (let i = 0; i < count; i++) parts.push(value);
+    });
+    field.value = parts.join(', ');
+}
+
+// Zeigt an jedem Chip die aktuelle Anzahl (×2, ×3, ...) an und markiert ausgewählte Chips
+function updateInstrumentLineChipBadges(container, fieldId) {
+    if (!container) return;
+    const counts = getInstrumentLineFieldCounts(fieldId);
+
+    container.querySelectorAll('.instrument-line-chip').forEach(chip => {
+        const count = counts.get(chip.dataset.line) || 0;
+        const badge = chip.querySelector('.instrument-line-chip-badge');
+        chip.classList.toggle('selected', count > 0);
+        if (badge) {
+            badge.textContent = count > 0 ? '×' + count : '';
+            badge.style.display = count > 0 ? 'inline' : 'none';
+        }
+    });
+}
+
+// Ein InstrumentLine-Chip anklicken (Mehrfachauswahl) - jeder Klick fügt eine weitere Nennung hinzu
+// (z.B. zweimal auf "LC" klicken -> "LC, LC", für Kunden mit mehreren identischen Geräten)
+function addInstrumentLineChip(chipEl, fieldId) {
+    const counts = getInstrumentLineFieldCounts(fieldId);
+    const line = chipEl.dataset.line;
+    counts.set(line, (counts.get(line) || 0) + 1);
+    rebuildInstrumentLineField(fieldId, counts);
+    updateInstrumentLineChipBadges(chipEl.parentElement, fieldId);
+}
+
+// Setzt die Anzahl eines einzelnen Chips auf 0 zurück (Klick auf das ×-Badge)
+function resetInstrumentLineChip(badgeEl, fieldId) {
+    const chipEl = badgeEl.closest('.instrument-line-chip');
+    if (!chipEl) return;
+
+    const counts = getInstrumentLineFieldCounts(fieldId);
+    counts.delete(chipEl.dataset.line);
+    rebuildInstrumentLineField(fieldId, counts);
+    updateInstrumentLineChipBadges(chipEl.parentElement, fieldId);
 }
 
 // Einen Chip auswählen (Einfachauswahl) - erneuter Klick auf den ausgewählten Chip hebt die Auswahl auf
@@ -614,7 +665,7 @@ function renderInstrumentLineQuickPicks() {
 
     const lines = getAllKnownInstrumentLines();
     container.innerHTML = lines.map(line => `
-        <button type="button" class="instrument-line-chip" onclick="toggleInstrumentLineChip(this, 'kundeInstrumentLine')">${line}</button>
+        <button type="button" class="instrument-line-chip" data-line="${line.replace(/"/g, '&quot;')}" onclick="addInstrumentLineChip(this, 'kundeInstrumentLine')">${line}<span class="instrument-line-chip-badge" onclick="event.stopPropagation(); resetInstrumentLineChip(this, 'kundeInstrumentLine')"></span></button>
     `).join('');
 }
 
@@ -8009,12 +8060,9 @@ function addSimSystemToKunde(kundeId, systemNamesRaw) {
     if (!Array.isArray(kunde.instrumentLines)) kunde.instrumentLines = [];
 
     // Mehrfachauswahl: systemNamesRaw kann eine kommagetrennte Liste sein (z.B. über die Schnellauswahl-Chips)
+    // Duplikate sind erlaubt (z.B. 2x "LC" für zwei identische Geräte beim selben Kunden)
     const namesToAdd = systemNamesRaw.split(',').map(s => s.trim()).filter(s => s.length > 0);
-    namesToAdd.forEach(name => {
-        if (!kunde.instrumentLines.includes(name)) {
-            kunde.instrumentLines.push(name);
-        }
-    });
+    namesToAdd.forEach(name => kunde.instrumentLines.push(name));
 
     checkCustomerCoverageFuture();
     renderFutureMarkers();
@@ -8170,9 +8218,9 @@ function renderFutureSandboxPanel() {
         const isAddingSystem = futureAddingSystemFor === kunde.id;
         let addSystemUI;
         if (isAddingSystem) {
-            const quickPicks = getAllKnownInstrumentLines().filter(line => !devices.includes(line));
+            const quickPicks = getAllKnownInstrumentLines();
             const quickPickChips = quickPicks.map(line =>
-                `<button type="button" class="instrument-line-chip" onclick="toggleInstrumentLineChip(this, 'futureNewSystemInput_${kunde.id}')">${line}</button>`
+                `<button type="button" class="instrument-line-chip" data-line="${line.replace(/"/g, '&quot;')}" onclick="addInstrumentLineChip(this, 'futureNewSystemInput_${kunde.id}')">${line}<span class="instrument-line-chip-badge" onclick="event.stopPropagation(); resetInstrumentLineChip(this, 'futureNewSystemInput_${kunde.id}')"></span></button>`
             ).join('');
 
             addSystemUI = `

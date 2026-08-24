@@ -842,6 +842,8 @@ body {
     border-radius: 10px;
     width: 90%;
     max-width: 500px;
+    max-height: 88vh;
+    overflow-y: auto;
     box-shadow: 0 5px 20px rgba(0,0,0,0.3);
     animation: slideDown 0.3s;
 }
@@ -3218,6 +3220,20 @@ body.future-mode-active #futureModeSection {
     background: #8e44ad;
     color: white;
     border-color: #8e44ad;
+}
+
+.instrument-line-chip-badge {
+    display: none;
+    margin-left: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.35);
+}
+
+.instrument-line-chip-badge:hover {
+    background: rgba(255,255,255,0.6);
 }
 
 .future-add-system-inline {
